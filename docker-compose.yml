@@ -1,0 +1,385 @@
+# =============================================================================
+# ASDT + Cross-Domain Digital Twin System — Merged Docker Compose
+# =============================================================================
+#
+# This compose file runs ALL infrastructure for both:
+#   1. ASDT (Agentic Soil Digital Twin) — your project
+#   2. Cross-Domain Framework (DT-Forge) — friend's SDT/PDT/BPDT
+#
+# Usage:
+#   docker compose up -d             # start all infrastructure
+#   python main.py --setup           # first time ASDT setup
+#   python main.py                   # start ASDT agents
+#   python cross_domain_launcher.py  # start cross-domain twins (separate terminal)
+#
+# Port map (offset +1000 from asdt2 to allow simultaneous running):
+#   1080  → nginx (ASDT reverse proxy)
+#   2883  → MQTT broker (shared)
+#   4000  → Grafana dashboards (ASDT)
+#   7379  → Redis (shared)
+#   8474  → Neo4j browser (shared)
+#   8687  → Neo4j bolt (shared)
+#   9000  → ASDT Twin API (FastAPI via Docker)
+#   9080  → Eclipse Ditto nginx (cross-domain)
+#   9086  → InfluxDB (shared)
+#   9501  → ASDT Scientist UI (Streamlit)
+#   9502  → ASDT Farmer UI (Streamlit)
+#   9503  → Cross-domain unified API (SDT+PDT+BPDT)
+#   10000 → MinIO object storage (shared)
+#   10001 → MQTT WebSocket
+#   10090 → MinIO console
+#   28017 → MongoDB (shared)
+# =============================================================================
+
+services:
+
+  # ===========================================================================
+  # SHARED INFRASTRUCTURE (used by both ASDT and cross-domain)
+  # ===========================================================================
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: merged_asdt_mosquitto
+    ports:
+      - "2883:1883"
+      - "10001:9001"
+    volumes:
+      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+    restart: unless-stopped
+    networks:
+      - dt_net
+
+  influxdb:
+    image: influxdb:2.7
+    container_name: merged_asdt_influxdb
+    ports:
+      - "9086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: adminpassword
+      DOCKER_INFLUXDB_INIT_ORG: asdt
+      DOCKER_INFLUXDB_INIT_BUCKET: soil_telemetry
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: my-super-secret-token
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    restart: unless-stopped
+    networks:
+      - dt_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  mongodb:
+    image: mongo:6
+    container_name: merged_asdt_mongodb
+    ports:
+      - "28017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+    networks:
+      - dt_net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: merged_asdt_redis
+    ports:
+      - "7379:6379"
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - dt_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5.13
+    container_name: merged_asdt_neo4j
+    ports:
+      - "8474:7474"
+      - "8687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/password
+      NEO4J_PLUGINS: '["apoc"]'
+    volumes:
+      - neo4j_data:/data
+    restart: unless-stopped
+    networks:
+      - dt_net
+    healthcheck:
+      test: ["CMD", "neo4j", "status"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: merged_asdt_minio
+    ports:
+      - "10000:9000"
+      - "10090:9090"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9090"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    networks:
+      - dt_net
+
+  # ===========================================================================
+  # ASDT-SPECIFIC SERVICES
+  # ===========================================================================
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: merged_asdt_grafana
+    ports:
+      - "4000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-clock-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./config/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - influxdb
+    restart: unless-stopped
+    networks:
+      - dt_net
+
+  twin-api:
+    image: python:3.11-slim
+    container_name: merged_asdt_twin_api
+    ports:
+      - "9000:8080"
+    environment:
+      MONGO_URI: "mongodb://admin:password@mongodb:27017"
+      MONGO_DB: "asdt"
+      INFLUXDB_URL: "http://influxdb:8086"
+      INFLUXDB_TOKEN: "my-super-secret-token"
+      INFLUXDB_ORG: "asdt"
+      INFLUXDB_BUCKET: "soil_telemetry"
+      REDIS_URL: "redis://redis:6379"
+      NEO4J_URI: "bolt://neo4j:7687"
+      NEO4J_USER: "neo4j"
+      NEO4J_PASSWORD: "password"
+      JWT_SECRET: "asdt-docker-jwt-secret"
+    volumes:
+      - ./service_layer:/app/service_layer:ro
+      - ./shared:/app/shared:ro
+      - ./ui:/app/ui:ro
+      - ./intelligent:/app/intelligent:ro
+    working_dir: /app
+    depends_on:
+      - mongodb
+      - redis
+      - influxdb
+    command: >
+      bash -c "pip install fastapi uvicorn pymongo redis influxdb-client
+      python-dotenv pydantic PyJWT neo4j langchain langchain-ollama
+      langchain-community pandas numpy paho-mqtt --quiet
+      && python -c \"import uvicorn; uvicorn.run('service_layer.twin_api:app', host='0.0.0.0', port=8080)\""
+    restart: unless-stopped
+    networks:
+      - dt_net
+
+  scientist-ui:
+    image: python:3.11-slim
+    container_name: merged_asdt_scientist_ui
+    ports:
+      - "9501:8501"
+    environment:
+      ASDT_API_URL: "http://twin-api:8080"
+    volumes:
+      - ./ui:/app/ui:ro
+    working_dir: /app
+    depends_on:
+      - twin-api
+    command: >
+      bash -c "pip install streamlit requests plotly pandas --quiet
+      && streamlit run ui/app_scientist.py
+      --server.port 8501
+      --server.address 0.0.0.0
+      --server.headless true
+      --browser.gatherUsageStats false"
+    restart: unless-stopped
+    networks:
+      - dt_net
+
+  farmer-ui:
+    image: python:3.11-slim
+    container_name: merged_asdt_farmer_ui
+    ports:
+      - "9502:8502"
+    environment:
+      ASDT_API_URL: "http://twin-api:8080"
+    volumes:
+      - ./ui:/app/ui:ro
+    working_dir: /app
+    depends_on:
+      - twin-api
+    command: >
+      bash -c "pip install streamlit requests plotly pandas --quiet
+      && streamlit run ui/app_farmer.py
+      --server.port 8502
+      --server.address 0.0.0.0
+      --server.headless true
+      --browser.gatherUsageStats false"
+    restart: unless-stopped
+    networks:
+      - dt_net
+
+  nginx:
+    image: nginx:alpine
+    container_name: merged_asdt_nginx
+    ports:
+      - "1080:80"
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - twin-api
+      - scientist-ui
+      - farmer-ui
+    restart: unless-stopped
+    networks:
+      - dt_net
+
+  # ===========================================================================
+  # CROSS-DOMAIN SERVICES (DT-Forge framework)
+  # ===========================================================================
+
+  # ── Eclipse Ditto (digital twin state representation) ───────────────────────
+  ditto-mongodb:
+    image: mongo:5
+    container_name: dt_ditto_mongodb
+    volumes:
+      - ditto_data:/data/db
+    restart: unless-stopped
+    networks:
+      - dt_net
+
+  ditto-policies:
+    image: docker.io/eclipse/ditto-policies:latest
+    container_name: dt_ditto_policies
+    networks:
+      dt_net:
+        aliases:
+          - ditto-cluster
+    environment:
+      MONGO_DB_URI: mongodb://ditto-mongodb:27017/policies
+    depends_on:
+      - ditto-mongodb
+    restart: on-failure
+
+  ditto-things:
+    image: docker.io/eclipse/ditto-things:latest
+    container_name: dt_ditto_things
+    networks:
+      dt_net:
+        aliases:
+          - ditto-cluster
+    environment:
+      MONGO_DB_URI: mongodb://ditto-mongodb:27017/things
+    depends_on:
+      - ditto-mongodb
+    restart: on-failure
+
+  ditto-gateway:
+    image: docker.io/eclipse/ditto-gateway:latest
+    container_name: dt_ditto_gateway
+    networks:
+      dt_net:
+        aliases:
+          - ditto-cluster
+    environment:
+      ENABLE_PRE_AUTHENTICATION: "true"
+    depends_on:
+      - ditto-policies
+      - ditto-things
+    restart: on-failure
+
+  ditto-nginx:
+    image: nginx:alpine
+    container_name: dt_ditto_nginx
+    ports:
+      - "9080:8080"
+    volumes:
+      - ./cross_domain/infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./cross_domain/infra/nginx/nginx.htpasswd:/etc/nginx/nginx.htpasswd:ro
+    depends_on:
+      - ditto-gateway
+    restart: unless-stopped
+    networks:
+      - dt_net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # ── Cross-domain InfluxDB bucket initialiser ────────────────────────────────
+  influx-cross-domain-init:
+    image: curlimages/curl:latest
+    container_name: dt_influx_cross_domain_init
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - dt_net
+    entrypoint: >
+      sh -c "
+      echo 'Creating cross-domain InfluxDB org and buckets...';
+      curl -sf -X POST http://influxdb:8086/api/v2/orgs
+        -H 'Authorization: Token my-super-secret-token'
+        -H 'Content-Type: application/json'
+        -d '{\"name\":\"digital_twin\"}'
+        && echo 'Org digital_twin created' || echo 'Org already exists (ok)';
+      ORG_ID=$$(curl -sf -H 'Authorization: Token my-super-secret-token'
+        'http://influxdb:8086/api/v2/orgs?org=digital_twin' |
+        grep -o '\"id\":\"[^\"]*\"' | head -1 | cut -d'\"' -f4);
+      if [ -z \"$$ORG_ID\" ]; then echo 'Could not find digital_twin org'; exit 0; fi;
+      for BUCKET in sdt_telemetry pdt_telemetry bpdt_telemetry; do
+        curl -sf -X POST http://influxdb:8086/api/v2/buckets
+          -H 'Authorization: Token my-super-secret-token'
+          -H 'Content-Type: application/json'
+          -d \"{\\\"orgID\\\":\\\"$$ORG_ID\\\",\\\"name\\\":\\\"$$BUCKET\\\",\\\"retentionRules\\\":[]}\"
+          && echo \"Created $$BUCKET\" || echo \"$$BUCKET exists (ok)\";
+      done;
+      echo 'Cross-domain InfluxDB buckets ready.'
+      "
+
+volumes:
+  influxdb_data:
+  grafana_data:
+  mongodb_data:
+  redis_data:
+  minio_data:
+  neo4j_data:
+  ditto_data:
+
+networks:
+  dt_net:
+    driver: bridge

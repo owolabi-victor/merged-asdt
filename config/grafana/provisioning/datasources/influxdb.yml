@@ -1,0 +1,15 @@
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB-ASDT
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    jsonData:
+      version: Flux
+      organization: asdt
+      defaultBucket: soil_telemetry
+    secureJsonData:
+      token: my-super-secret-token
+    isDefault: true
+    editable: true

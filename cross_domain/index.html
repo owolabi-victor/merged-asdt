@@ -1,0 +1,2068 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Soil–Plant–Biotic Pod Digital Twin Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #22263a;
+    --border: #2e3348;
+    --text: #e2e8f0;
+    --muted: #8892a4;
+    --accent: #4f8ef7;
+    --green: #34d399;
+    --yellow: #fbbf24;
+    --orange: #f97316;
+    --red: #f87171;
+    --purple: #a78bfa;
+    --cyan: #22d3ee;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
+
+  /* Layout */
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; gap: 16px; }
+  .header h1 { font-size: 16px; font-weight: 600; }
+  .header .subtitle { color: var(--muted); font-size: 12px; }
+  .conn-indicator { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background 0.3s; }
+  .conn-dot.live { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .conn-dot.error { background: var(--red); }
+
+  .config-bar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 8px 20px; display: flex; align-items: center; gap: 12px; font-size: 12px; }
+  .config-bar label { color: var(--muted); }
+  .config-bar input { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; width: 200px; font-size: 12px; }
+  .btn-sm { background: var(--accent); color: #fff; border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  .btn-sm:hover { opacity: 0.85; }
+
+  .tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .tab { padding: 10px 20px; cursor: pointer; color: var(--muted); font-size: 13px; border-bottom: 2px solid transparent; transition: all 0.2s; }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .tab-panel { display: none; padding: 20px; }
+  .tab-panel.active { display: block; }
+
+  /* Grid */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .col-span-2 { grid-column: span 2; }
+  .col-span-3 { grid-column: span 3; }
+
+  /* Cards */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .card-title { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+  .card-title .badge { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+
+  /* Metric cards */
+  .metric-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .metric-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .metric-value { font-size: 26px; font-weight: 700; line-height: 1; }
+  .metric-unit { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .metric-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  /* FSM state badge */
+  .fsm-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: 600; border: 1px solid; }
+
+  /* Status banner */
+  .status-banner { border-radius: 8px; padding: 12px 16px; display: flex; align-items: center; gap: 12px; margin-bottom: 16px; font-weight: 600; border: 1px solid; }
+
+  /* Chart containers */
+  .chart-wrap { position: relative; height: 200px; }
+  .chart-wrap-tall { position: relative; height: 260px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; }
+  td { padding: 6px 8px; border-bottom: 1px solid rgba(46,51,72,0.5); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--surface2); }
+
+  /* Value pill */
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .pill-green  { background: rgba(52,211,153,0.15); color: var(--green); }
+  .pill-yellow { background: rgba(251,191,36,0.15);  color: var(--yellow); }
+  .pill-orange { background: rgba(249,115,22,0.15); color: var(--orange); }
+  .pill-red    { background: rgba(248,113,113,0.15); color: var(--red); }
+  .pill-purple { background: rgba(167,139,250,0.15); color: var(--purple); }
+  .pill-blue   { background: rgba(79,142,247,0.15); color: var(--accent); }
+  .pill-muted  { background: rgba(136,146,164,0.15); color: var(--muted); }
+
+  /* FSM Visualiser */
+  .fsm-nodes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .fsm-node { padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); color: var(--muted); background: var(--surface2); transition: all 0.3s; }
+  .fsm-node.active { border-color: var(--accent); color: var(--text); }
+  .fsm-node.OPTIMAL, .fsm-node.UNSTRESSED, .fsm-node.NOMINAL { background: rgba(52,211,153,0.12); border-color: var(--green); color: var(--green); }
+  .fsm-node.DEPLETING, .fsm-node.MILD_STRESS, .fsm-node.SOIL_ALERT, .fsm-node.PLANT_ALERT { background: rgba(251,191,36,0.12); border-color: var(--yellow); color: var(--yellow); }
+  .fsm-node.CRITICAL, .fsm-node.MODERATE_STRESS, .fsm-node.IRRIGATION_PENDING { background: rgba(249,115,22,0.12); border-color: var(--orange); color: var(--orange); }
+  .fsm-node.WILTING_RISK, .fsm-node.SEVERE_STRESS, .fsm-node.EMERGENCY { background: rgba(248,113,113,0.12); border-color: var(--red); color: var(--red); }
+  .fsm-node.WILTING { background: rgba(248,113,113,0.25); border-color: var(--red); color: var(--red); font-weight: 800; }
+  .fsm-node.RECOVERY { background: rgba(34,211,238,0.12); border-color: var(--cyan); color: var(--cyan); }
+  .fsm-node.IRRIGATION_ACTIVE { background: rgba(79,142,247,0.15); border-color: var(--accent); color: var(--accent); }
+  .fsm-node.MAINTENANCE { background: rgba(167,139,250,0.12); border-color: var(--purple); color: var(--purple); }
+  .fsm-node.SENSOR_FAULT { background: rgba(248,113,113,0.12); border-color: var(--red); color: var(--red); }
+
+  /* Irrigation control */
+  .irr-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  .irr-controls input, .irr-controls select { width: 100%; background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 5px; font-size: 13px; }
+  .irr-controls label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 3px; }
+  .btn-green  { background: var(--green);  color: #0f1117; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-weight: 700; width: 100%; font-size: 13px; margin-top: 8px; }
+  .btn-red    { background: var(--red);    color: #0f1117; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-weight: 700; width: 100%; font-size: 13px; margin-top: 4px; }
+  .btn-yellow { background: var(--yellow); color: #0f1117; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-weight: 700; width: 100%; font-size: 13px; margin-top: 4px; }
+  .btn-green:hover, .btn-red:hover, .btn-yellow:hover { opacity: 0.85; }
+  .btn-green:disabled, .btn-red:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Obs form */
+  .obs-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+  .obs-form input, .obs-form select, .obs-form textarea { width: 100%; background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 5px; font-size: 12px; }
+  .obs-form textarea { resize: vertical; min-height: 60px; }
+  .obs-form label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 3px; }
+  .obs-form .full-width { grid-column: span 2; }
+
+  /* PID display */
+  .pid-bar { background: var(--surface2); border-radius: 4px; height: 14px; overflow: hidden; margin-top: 6px; }
+  .pid-fill { height: 100%; background: var(--accent); transition: width 0.5s; border-radius: 4px; }
+
+  /* Scrollable event log */
+  .event-log { max-height: 260px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .event-log::-webkit-scrollbar { width: 4px; }
+  .event-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Agent status dots */
+  .agent-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid rgba(46,51,72,0.4); }
+  .agent-row:last-child { border-bottom: none; }
+  .agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+  .agent-dot.idle { background: var(--muted); }
+  .agent-name { font-weight: 600; font-size: 12px; flex: 1; }
+  .agent-priority { color: var(--muted); font-size: 11px; }
+  .agent-action { font-size: 11px; color: var(--cyan); }
+
+  /* OODA vector */
+  .ooda-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 8px; }
+  .ooda-item { background: var(--surface2); border-radius: 5px; padding: 6px 10px; display: flex; justify-content: space-between; align-items: center; }
+  .ooda-key { font-size: 11px; color: var(--muted); }
+  .ooda-val { font-size: 12px; font-weight: 600; color: var(--text); }
+
+  /* BC table accent */
+  .bc-from { color: var(--cyan); }
+  .bc-to   { color: var(--purple); }
+
+  /* toast */
+  .toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; font-size: 13px; z-index: 9999; display: none; max-width: 320px; }
+  .toast.show { display: block; animation: fadeIn 0.2s; }
+  @keyframes fadeIn { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }
+
+  /* Responsive helpers */
+  @media (max-width: 900px) {
+    .grid-3 { grid-template-columns: 1fr 1fr; }
+    .grid-4 { grid-template-columns: 1fr 1fr; }
+    .col-span-3 { grid-column: span 2; }
+  }
+  @media (max-width: 600px) {
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    .col-span-2, .col-span-3 { grid-column: span 1; }
+  }
+
+  section + section { margin-top: 16px; }
+  .mb-4 { margin-bottom: 16px; }
+  .mb-2 { margin-bottom: 8px; }
+  .mt-2 { margin-top: 8px; }
+  .text-muted { color: var(--muted); }
+  .text-sm { font-size: 12px; }
+  hr.divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+
+  /* Chat bubbles */
+  .chat-bubble { margin-bottom: 10px; padding: 10px 14px; border-radius: 7px; font-size: 13px; line-height: 1.65; }
+  .chat-bubble-user  { background: var(--surface2); border: 1px solid var(--border); }
+  .chat-bubble-agent { background: rgba(79,142,247,0.07); border: 1px solid rgba(79,142,247,0.25); }
+  .chat-role { font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .chat-role-user  { color: var(--muted); }
+  .chat-role-agent { color: var(--accent); }
+  .chat-thinking { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+
+<!-- ======================== HEADER ======================== -->
+<div class="header">
+  <div>
+    <h1>Soil–Plant–Biotic Pod Digital Twin</h1>
+    <div class="subtitle">Cross-Domain Agentic Agricultural Monitoring &amp; Control System</div>
+  </div>
+  <div class="conn-indicator">
+    <div class="conn-dot" id="connDot"></div>
+    <span id="connLabel">Connecting…</span>
+    &nbsp;|&nbsp; Last update: <span id="lastUpdate">—</span>
+  </div>
+</div>
+
+<!-- ======================== CONFIG BAR ======================== -->
+<div class="config-bar">
+  <label>API Base URL:</label>
+  <input type="text" id="apiBase" value="http://localhost:8503" placeholder="http://localhost:8503">
+  <button class="btn-sm" onclick="reconnect()">Connect</button>
+  <span style="color:var(--muted);margin-left:8px;">Unified mode — all SDT, PDT and BPDT endpoints on this port</span>
+</div>
+
+<!-- ======================== TABS ======================== -->
+<div class="tabs">
+  <div class="tab active" onclick="showTab('user')">Field Operations</div>
+  <div class="tab" onclick="showTab('admin')">System Monitor (Admin)</div>
+  <div class="tab" onclick="showTab('agents')">Agent Inspector</div>
+</div>
+
+<!-- ================================================================
+     TAB 1 — FIELD OPERATIONS (for farm manager)
+     ================================================================ -->
+<div id="tab-user" class="tab-panel active">
+
+  <!-- Status Banner -->
+  <div id="statusBanner" class="status-banner" style="background:rgba(52,211,153,0.08);border-color:var(--green);color:var(--green);">
+    <span style="font-size:20px;">✔</span>
+    <div>
+      <div id="bannerTitle">System Nominal</div>
+      <div style="font-size:12px;font-weight:400;opacity:0.8;" id="bannerSub">All twins online · Soil moisture adequate · No stress detected</div>
+    </div>
+    <div style="margin-left:auto;text-align:right;">
+      <div style="font-size:11px;color:inherit;opacity:0.7;">BPDT</div>
+      <div id="bannerBpdt" style="font-size:15px;">—</div>
+    </div>
+  </div>
+
+  <!-- Top metrics row -->
+  <div class="grid-4 mb-4">
+    <div class="metric-card">
+      <div class="metric-label">Soil Moisture (10 cm)</div>
+      <div class="metric-value" id="m_vwc10">—</div>
+      <div class="metric-unit">m³/m³</div>
+      <div class="metric-sub">FC=0.10 &nbsp;|&nbsp; PWP=0.05</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Soil Moisture (30 cm)</div>
+      <div class="metric-value" id="m_vwc30">—</div>
+      <div class="metric-unit">m³/m³</div>
+      <div class="metric-sub">Field capacity: 0.10</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Time to PWP</div>
+      <div class="metric-value" id="m_ttpwp">—</div>
+      <div class="metric-unit">hours</div>
+      <div class="metric-sub">At current depletion rate</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Time to Wilting</div>
+      <div class="metric-value" id="m_ttw">—</div>
+      <div class="metric-unit">hours</div>
+      <div class="metric-sub">Leaf ψ trajectory (R-PDT-08)</div>
+    </div>
+  </div>
+
+  <div class="grid-4 mb-4">
+    <div class="metric-card">
+      <div class="metric-label">CWSI (Stress Index)</div>
+      <div class="metric-value" id="m_cwsi">—</div>
+      <div class="metric-unit">0 = no stress · 1 = max</div>
+      <div class="metric-sub">Mild &gt;0.20 · Severe &gt;0.70</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Leaf Water Potential</div>
+      <div class="metric-value" id="m_psi">—</div>
+      <div class="metric-unit">MPa</div>
+      <div class="metric-sub">Wilting threshold: −2.5 MPa</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">ET Rate</div>
+      <div class="metric-value" id="m_et">—</div>
+      <div class="metric-unit">mm/day</div>
+      <div class="metric-sub">FAO-56 crop evapotranspiration</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Yield Penalty</div>
+      <div class="metric-value" id="m_yield">—</div>
+      <div class="metric-unit">% reduction</div>
+      <div class="metric-sub">AquaCrop Ya/Ymax model</div>
+    </div>
+  </div>
+
+  <!-- Soil moisture chart + Plant stress chart -->
+  <div class="grid-2 mb-4">
+    <div class="card">
+      <div class="card-title">Soil Moisture Profile — Live (30 min rolling)</div>
+      <div class="chart-wrap-tall">
+        <canvas id="chartSoil"></canvas>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Plant Stress Indicators — Live</div>
+      <div class="chart-wrap-tall">
+        <canvas id="chartStress"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Irrigation control + Water budget -->
+  <div class="grid-2 mb-4">
+    <div class="card">
+      <div class="card-title">Irrigation Control</div>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
+        <span>Current status:</span>
+        <span id="irrStatusBadge" class="pill pill-muted">Checking…</span>
+        <span id="irrRateLive" style="font-size:12px;color:var(--muted);"></span>
+      </div>
+      <div class="irr-controls">
+        <div>
+          <label>Rate (L/hr)</label>
+          <input type="number" id="irrRate" value="8" min="0.1" max="20" step="0.1">
+        </div>
+        <div>
+          <label>Duration (min)</label>
+          <input type="number" id="irrDuration" value="30" min="1" max="480">
+        </div>
+        <div class="col-span-2" style="grid-column:span 2;">
+          <label>Reason</label>
+          <input type="text" id="irrReason" value="Manual field check" style="width:100%">
+        </div>
+      </div>
+      <button class="btn-green" id="btnStartIrr" onclick="startIrrigation()">Start Irrigation</button>
+      <button class="btn-red"   id="btnStopIrr"  onclick="stopIrrigation()">Stop Irrigation</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Water Budget (7-day rolling)</div>
+      <table>
+        <tr><td class="text-muted">7-day balance</td><td id="wb_balance">—</td></tr>
+        <tr><td class="text-muted">Total irrigation applied</td><td id="wb_irr">—</td></tr>
+        <tr><td class="text-muted">ET loss rate</td><td id="wb_et">—</td></tr>
+        <tr><td class="text-muted">Rain today</td><td id="wb_rain">—</td></tr>
+        <tr><td class="text-muted">Current irrigation rate</td><td id="wb_rate">—</td></tr>
+      </table>
+      <hr class="divider">
+      <div class="card-title">Yield Status</div>
+      <table>
+        <tr><td class="text-muted">Penalty</td><td id="ys_penalty">—</td></tr>
+        <tr><td class="text-muted">Ya/Ymax</td><td id="ys_ya">—</td></tr>
+        <tr><td class="text-muted">ETa/ETc</td><td id="ys_eta">—</td></tr>
+        <tr><td class="text-muted">Crop / Stage</td><td>Maize V6-V8</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- Recent events + Field observation form -->
+  <div class="grid-2 mb-4">
+    <div class="card">
+      <div class="card-title">Recent Irrigation Events</div>
+      <div class="event-log">
+        <table>
+          <thead><tr><th>Time</th><th>Event</th><th>Detail</th></tr></thead>
+          <tbody id="irrEventsTbody"><tr><td colspan="3" class="text-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Field Observation Log</div>
+      <div class="obs-form">
+        <div>
+          <label>Observer name</label>
+          <input type="text" id="obsObserver" value="Field Manager">
+        </div>
+        <div>
+          <label>Visual stress level</label>
+          <select id="obsStress">
+            <option value="none">None</option>
+            <option value="mild">Mild</option>
+            <option value="moderate">Moderate</option>
+            <option value="severe">Severe</option>
+            <option value="wilted">Wilted</option>
+          </select>
+        </div>
+        <div>
+          <label>Estimated VWC (m³/m³)</label>
+          <input type="number" id="obsVwc" placeholder="e.g. 0.08" step="0.01" min="0" max="0.5">
+        </div>
+        <div>
+          <label>Leaf roll observed?</label>
+          <select id="obsLeafRoll">
+            <option value="false">No</option>
+            <option value="true">Yes</option>
+          </select>
+        </div>
+        <div class="full-width">
+          <label>Notes</label>
+          <textarea id="obsNotes" placeholder="Crop observations, anomalies, field conditions…"></textarea>
+        </div>
+        <div class="full-width">
+          <button class="btn-green" onclick="submitObservation()">Submit Field Observation</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FSM state quick view for user -->
+  <div class="grid-3 mb-4">
+    <div class="card">
+      <div class="card-title">Soil Twin State (SDT)</div>
+      <div class="fsm-nodes" id="fsm_sdt_user"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Plant Twin State (PDT)</div>
+      <div class="fsm-nodes" id="fsm_pdt_user"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Biotic Pod State (BPDT)</div>
+      <div class="fsm-nodes" id="fsm_bpdt_user"></div>
+    </div>
+  </div>
+
+</div><!-- /tab-user -->
+
+
+<!-- ================================================================
+     TAB 2 — SYSTEM MONITOR (Admin / Developer)
+     ================================================================ -->
+<div id="tab-admin" class="tab-panel">
+
+  <!-- Top status row -->
+  <div class="grid-3 mb-4">
+    <div class="card">
+      <div class="card-title">SDT — Soil Digital Twin</div>
+      <div style="margin-bottom:10px;">State: <span id="adm_sdt_state" class="fsm-badge" style="border-color:var(--muted);color:var(--muted);">—</span></div>
+      <div class="card-title" style="margin-top:8px;">All States</div>
+      <div class="fsm-nodes" id="fsm_sdt_admin"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">PDT — Plant Digital Twin</div>
+      <div style="margin-bottom:10px;">State: <span id="adm_pdt_state" class="fsm-badge" style="border-color:var(--muted);color:var(--muted);">—</span></div>
+      <div class="card-title" style="margin-top:8px;">All States</div>
+      <div class="fsm-nodes" id="fsm_pdt_admin"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">BPDT — Biotic Pod Digital Twin</div>
+      <div style="margin-bottom:10px;">State: <span id="adm_bpdt_state" class="fsm-badge" style="border-color:var(--muted);color:var(--muted);">—</span></div>
+      <div class="card-title" style="margin-top:8px;">All States</div>
+      <div class="fsm-nodes" id="fsm_bpdt_admin"></div>
+    </div>
+  </div>
+
+  <!-- PID Controller + Boundary Conditions -->
+  <div class="grid-2 mb-4">
+    <div class="card">
+      <div class="card-title">PID Irrigation Controller</div>
+      <table style="margin-bottom:10px;">
+        <tr><td class="text-muted">Setpoint (SP)</td><td>0.08 m³/m³ VWC</td></tr>
+        <tr><td class="text-muted">Kp / Ki / Kd</td><td>15.0 / 0.8 / 2.0</td></tr>
+        <tr><td class="text-muted">Output range</td><td>0 – 20 L/hr</td></tr>
+        <tr><td class="text-muted">Current VWC (PV)</td><td id="pid_pv">—</td></tr>
+        <tr><td class="text-muted">Error (SP − PV)</td><td id="pid_err">—</td></tr>
+        <tr><td class="text-muted">Output</td><td id="pid_out">—</td></tr>
+        <tr><td class="text-muted">Controller active</td><td id="pid_active">—</td></tr>
+      </table>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Output throttle (0–20 L/hr)</div>
+      <div class="pid-bar"><div class="pid-fill" id="pid_bar" style="width:0%;"></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Boundary Conditions (Live)</div>
+      <table>
+        <thead><tr><th>ID</th><th>Signal</th><th>From</th><th>To</th><th>Value</th></tr></thead>
+        <tbody id="bcTbody">
+          <tr><td>BC-01</td><td>vwc_10cm → PDT</td><td class="bc-from">SDT</td><td class="bc-to">PDT</td><td id="bc01">—</td></tr>
+          <tr><td>BC-02</td><td>vwc_30cm → PDT</td><td class="bc-from">SDT</td><td class="bc-to">PDT</td><td id="bc02">—</td></tr>
+          <tr><td>BC-03</td><td>soil_ψ → PDT (×0.001)</td><td class="bc-from">SDT</td><td class="bc-to">PDT</td><td id="bc03">—</td></tr>
+          <tr><td>BC-04</td><td>transpiration → SDT</td><td class="bc-from">PDT</td><td class="bc-to">SDT</td><td id="bc04">—</td></tr>
+          <tr><td>BC-05</td><td>depletion_rate → PDT</td><td class="bc-from">SDT</td><td class="bc-to">PDT</td><td id="bc05">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- MAS Agents panel -->
+  <div class="grid-2 mb-4">
+    <div class="card">
+      <div class="card-title">Multi-Agent System (MAS) — All Twins</div>
+
+      <div style="font-size:11px;font-weight:600;color:var(--muted);margin:4px 0 2px;">BPDT — Biotic Pod Overseer</div>
+      <div id="bpdtAgentList">
+        <div class="agent-row"><div class="agent-dot" id="bpdt_ag0dot"></div><div class="agent-name">SystemIntegrationAgent</div><div class="agent-priority">P10</div><div class="agent-action" id="bpdt_ag0act">—</div></div>
+        <div class="agent-row"><div class="agent-dot" id="bpdt_ag1dot"></div><div class="agent-name">IrrigationDecisionAgent</div><div class="agent-priority">P9</div><div class="agent-action" id="bpdt_ag1act">—</div></div>
+        <div class="agent-row"><div class="agent-dot" id="bpdt_ag2dot"></div><div class="agent-name">AnomalyDetectionAgent</div><div class="agent-priority">P8</div><div class="agent-action" id="bpdt_ag2act">—</div></div>
+        <div class="agent-row"><div class="agent-dot" id="bpdt_ag3dot"></div><div class="agent-name">WaterEfficiencyAgent</div><div class="agent-priority">P6</div><div class="agent-action" id="bpdt_ag3act">—</div></div>
+        <div class="agent-row"><div class="agent-dot" id="bpdt_ag4dot"></div><div class="agent-name">LedgerAgent</div><div class="agent-priority">P5</div><div class="agent-action" id="bpdt_ag4act">—</div></div>
+      </div>
+      <hr class="divider">
+
+      <div style="font-size:11px;font-weight:600;color:var(--muted);margin:4px 0 2px;">SDT — Soil Twin</div>
+      <div id="sdtAgentList">
+        <div class="agent-row"><div class="agent-dot idle" id="sdt_ag0dot"></div><div class="agent-name">MoistureDepletionAgent</div><div class="agent-priority">—</div><div class="agent-action" id="sdt_ag0act">—</div></div>
+        <div class="agent-row"><div class="agent-dot idle" id="sdt_ag1dot"></div><div class="agent-name">SensorValidationAgent</div><div class="agent-priority">—</div><div class="agent-action" id="sdt_ag1act">—</div></div>
+        <div class="agent-row"><div class="agent-dot idle" id="sdt_ag2dot"></div><div class="agent-name">HydraulicPropertyAgent</div><div class="agent-priority">—</div><div class="agent-action" id="sdt_ag2act">—</div></div>
+        <div class="agent-row"><div class="agent-dot idle" id="sdt_ag3dot"></div><div class="agent-name">ETForecastAgent</div><div class="agent-priority">—</div><div class="agent-action" id="sdt_ag3act">—</div></div>
+      </div>
+      <hr class="divider">
+
+      <div style="font-size:11px;font-weight:600;color:var(--muted);margin:4px 0 2px;">PDT — Plant Twin</div>
+      <div id="pdtAgentList">
+        <div class="agent-row"><div class="agent-dot idle" id="pdt_ag0dot"></div><div class="agent-name">StressClassificationAgent</div><div class="agent-priority">—</div><div class="agent-action" id="pdt_ag0act">—</div></div>
+        <div class="agent-row"><div class="agent-dot idle" id="pdt_ag1dot"></div><div class="agent-name">WiltingPredictionAgent</div><div class="agent-priority">—</div><div class="agent-action" id="pdt_ag1act">—</div></div>
+        <div class="agent-row"><div class="agent-dot idle" id="pdt_ag2dot"></div><div class="agent-name">TranspirationAgent</div><div class="agent-priority">—</div><div class="agent-action" id="pdt_ag2act">—</div></div>
+        <div class="agent-row"><div class="agent-dot idle" id="pdt_ag3dot"></div><div class="agent-name">PhotosynthesisAgent</div><div class="agent-priority">—</div><div class="agent-action" id="pdt_ag3act">—</div></div>
+        <div class="agent-row"><div class="agent-dot idle" id="pdt_ag4dot"></div><div class="agent-name">YieldPenaltyAgent</div><div class="agent-priority">—</div><div class="agent-action" id="pdt_ag4act">—</div></div>
+      </div>
+      <hr class="divider">
+
+      <div class="card-title" style="margin-top:4px;">Latest LLM Analysis</div>
+      <div id="llmLatestAnalysis" style="font-size:11px;line-height:1.6;color:var(--text);max-height:72px;overflow-y:auto;padding:2px 0;"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">OODA Observation Vector (14D)</div>
+      <div class="ooda-grid" id="oodaGrid">
+        <!-- populated by JS -->
+      </div>
+      <hr class="divider" style="margin-top:10px;">
+      <div class="card-title" style="margin-top:4px;">OODA Last Decision</div>
+      <table>
+        <tr><td class="text-muted">Action</td><td id="ooda_last_action">—</td></tr>
+        <tr><td class="text-muted">Risk level</td><td id="ooda_last_risk">—</td></tr>
+        <tr><td class="text-muted">Reason</td><td id="ooda_last_reason" class="text-muted" style="font-size:11px;"></td></tr>
+        <tr><td class="text-muted">Cycle time</td><td id="ooda_last_ts">—</td></tr>
+      </table>
+      <hr class="divider" style="margin-top:10px;">
+      <div class="card-title" style="margin-top:4px;">Autonomous Overseer <span id="overseer_driven_badge" class="pill pill-muted" style="font-size:10px;">—</span></div>
+      <table>
+        <tr><td class="text-muted">Action</td><td id="overseer_action">—</td></tr>
+        <tr><td class="text-muted">Risk level</td><td id="overseer_risk">—</td></tr>
+        <tr><td class="text-muted">Goals addressed</td><td id="overseer_goals" class="text-muted" style="font-size:11px;">—</td></tr>
+        <tr><td class="text-muted">Agent queries</td><td id="overseer_queries">—</td></tr>
+        <tr><td class="text-muted">Reasoning</td><td id="overseer_reasoning" class="text-muted" style="font-size:11px;line-height:1.4;max-width:260px;word-break:break-word;"></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- MAS Decision History (persisted in MongoDB) -->
+  <div class="card mb-4">
+    <div class="card-title">
+      MAS Decision History — Persisted in MongoDB
+      <span id="masHistCount" class="text-muted text-sm"></span>
+    </div>
+    <div class="event-log">
+      <table>
+        <thead><tr><th>Time</th><th>Agent</th><th>Anomaly</th><th>Action</th><th>Severity</th><th>Detail</th></tr></thead>
+        <tbody id="masHistTbody"><tr><td colspan="6" class="text-muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Raw sensor readings + VWC chart -->
+  <div class="grid-2 mb-4">
+    <div class="card">
+      <div class="card-title">Raw Sensor Telemetry</div>
+      <table>
+        <thead><tr><th>Sensor / Signal</th><th>Value</th><th>Status</th></tr></thead>
+        <tbody id="sensorTbody"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-title">VWC + Stress — Rolling 30 min</div>
+      <div class="chart-wrap-tall">
+        <canvas id="chartAdmin"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Simulation status + Config panel -->
+  <div class="grid-2 mb-4">
+    <div class="card">
+      <div class="card-title">Active Simulation Status</div>
+      <table>
+        <thead><tr><th>Component</th><th>Type</th><th>Status</th><th>Cycle</th></tr></thead>
+        <tbody>
+          <tr><td>SDT Simulator</td><td>Van Genuchten + Richards</td><td id="sim_sdt" class="pill pill-muted">—</td><td>30 s (900 s sim)</td></tr>
+          <tr><td>PDT Simulator</td><td>SPA Canopy Transpiration</td><td id="sim_pdt" class="pill pill-muted">—</td><td>30 s (1800 s sim)</td></tr>
+          <tr><td>BPDT OODA Loop</td><td>LLM Overseer (AutonomousOverseer) + PID</td><td id="sim_bpdt" class="pill pill-muted">—</td><td>600 s</td></tr>
+          <tr><td>SDT FSM (reactive)</td><td>Multi-state rule engine</td><td id="sim_fsm_sdt" class="pill pill-muted">—</td><td>900 s</td></tr>
+          <tr><td>PDT FSM (reactive)</td><td>Multi-state rule engine</td><td id="sim_fsm_pdt" class="pill pill-muted">—</td><td>1800 s</td></tr>
+          <tr><td>BPDT FSM (reactive)</td><td>Multi-state rule engine</td><td id="sim_fsm_bpdt" class="pill pill-muted">—</td><td>600 s</td></tr>
+          <tr><td>MAS (intelligent)</td><td>LangChain LLM agents (14 total)</td><td id="sim_mas" class="pill pill-muted">—</td><td>60 s</td></tr>
+          <tr><td>Knowledge Graphs</td><td>Neo4j (3 ontologies)</td><td id="sim_kg" class="pill pill-muted">—</td><td>static</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-title">System Configuration</div>
+      <table>
+        <tr><td class="text-muted">Asset ID (BPDT)</td><td id="cfg_asset">—</td></tr>
+        <tr><td class="text-muted">SDT ID</td><td id="cfg_sdt">—</td></tr>
+        <tr><td class="text-muted">PDT ID</td><td id="cfg_pdt">—</td></tr>
+        <tr><td class="text-muted">Soil type</td><td>Sandy loam (Carsel &amp; Parrish 1988)</td></tr>
+        <tr><td class="text-muted">Crop</td><td>Maize (Zea mays L.) V6-V8</td></tr>
+        <tr><td class="text-muted">Van Genuchten θ_r/θ_s</td><td>0.050 / 0.430 m³/m³</td></tr>
+        <tr><td class="text-muted">Van Genuchten α/n</td><td>0.022 cm⁻¹ / 2.00</td></tr>
+        <tr><td class="text-muted">K_sat</td><td>0.44 m/day</td></tr>
+        <tr><td class="text-muted">Boundary conditions</td><td>BC-01 … BC-05</td></tr>
+        <tr><td class="text-muted">Hot-swap supported</td><td id="cfg_hotswap">—</td></tr>
+        <tr><td class="text-muted">Version</td><td id="cfg_version">—</td></tr>
+      </table>
+      <hr class="divider">
+      <div class="card-title">Water Use Efficiency</div>
+      <table>
+        <tr><td class="text-muted">Total irrigation applied</td><td id="wue_irr">—</td></tr>
+        <tr><td class="text-muted">Water productivity</td><td id="wue_wp">—</td></tr>
+        <tr><td class="text-muted">Target water saving</td><td>30% vs fixed-schedule baseline</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- Full event log -->
+  <div class="card mb-4">
+    <div class="card-title">Full System Event Log <span id="evtCount" class="text-muted text-sm"></span></div>
+    <div class="event-log">
+      <table>
+        <thead><tr><th>Time</th><th>Type</th><th>Twin</th><th>Severity</th><th>Detail</th></tr></thead>
+        <tbody id="fullEventTbody"><tr><td colspan="5" class="text-muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Hot-swap panel -->
+  <div class="card mb-4">
+    <div class="card-title">Hot-Swap Sub-Twin</div>
+    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+      <div>
+        <label class="text-muted text-sm" style="display:block;margin-bottom:3px;">Twin role</label>
+        <select id="swapRole" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:5px;">
+          <option value="sdt">SDT</option>
+          <option value="pdt">PDT</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-muted text-sm" style="display:block;margin-bottom:3px;">New config ID</label>
+        <input type="text" id="swapConfigId" value="cfg_v2_001" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:5px;width:160px;">
+      </div>
+      <button class="btn-yellow" style="width:auto;margin-top:0;" onclick="triggerHotSwap()">Initiate Hot-Swap</button>
+    </div>
+    <div id="swapResult" class="text-sm text-muted mt-2"></div>
+  </div>
+
+</div><!-- /tab-admin -->
+
+<!-- ================================================================
+     TAB 3 — AGENT INSPECTOR
+     ================================================================ -->
+<div id="tab-agents" class="tab-panel">
+
+  <!-- Agent selector bar -->
+  <div class="card mb-4">
+    <div class="card-title">Select Twin &amp; Agent to Inspect</div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <select id="twinSelect" onchange="onTwinSelect(this.value)"
+              style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:5px;font-size:13px;min-width:180px;">
+        <option value="bpdt">BPDT — Biotic Pod (5 agents)</option>
+        <option value="sdt">SDT — Soil (4 agents)</option>
+        <option value="pdt">PDT — Plant (5 agents)</option>
+      </select>
+      <select id="agentSelect" onchange="selectAgent(this.value)"
+              style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:5px;font-size:13px;min-width:300px;">
+        <option value="">— Choose an agent —</option>
+      </select>
+      <button class="btn-sm" onclick="refreshAgentDetail()" style="padding:6px 14px;">Refresh</button>
+      <span class="text-muted text-sm" id="agentDetailTs"></span>
+    </div>
+  </div>
+
+  <!-- Detail panels — hidden until an agent is selected -->
+  <div id="agentDetailPanel" style="display:none;">
+
+    <!-- Status row -->
+    <div class="grid-3 mb-4">
+      <div class="metric-card">
+        <div class="metric-label">Agent</div>
+        <div class="metric-value" id="det_name" style="font-size:17px;font-weight:700;">—</div>
+        <div class="metric-sub" id="det_domain"></div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Last Action</div>
+        <div class="metric-value" id="det_action" style="font-size:17px;font-weight:700;">—</div>
+        <div class="metric-sub" id="det_severity"></div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Anomaly Detected</div>
+        <div class="metric-value" id="det_anomaly" style="font-size:17px;">—</div>
+        <div class="metric-sub" id="det_ts">Last cycle: —</div>
+      </div>
+    </div>
+
+    <!-- Observations + Findings -->
+    <div class="grid-2 mb-4">
+      <div class="card">
+        <div class="card-title">Last Observations</div>
+        <div class="event-log" style="max-height:220px;">
+          <table id="det_obs_table">
+            <thead><tr><th>Signal</th><th>Value</th></tr></thead>
+            <tbody id="det_obs_tbody"><tr><td colspan="2" class="text-muted">No observations yet</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Last LLM Analysis (findings.summary)</div>
+        <div id="det_summary" style="font-size:13px;line-height:1.7;max-height:160px;overflow-y:auto;color:var(--text);"></div>
+        <div id="det_error" style="font-size:12px;color:var(--red);margin-top:8px;"></div>
+      </div>
+    </div>
+
+    <!-- Tool calls -->
+    <div class="card mb-4">
+      <div class="card-title">Tools Called in Last Cycle <span id="det_tool_count" class="text-muted text-sm"></span></div>
+      <div class="event-log">
+        <table>
+          <thead><tr><th style="width:30px;">#</th><th style="width:160px;">Tool</th><th>Input</th><th>Output (truncated)</th></tr></thead>
+          <tbody id="det_toolcalls_tbody"><tr><td colspan="4" class="text-muted">No tool calls yet — waiting for first MAS cycle</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Chat interface -->
+    <div class="card mb-4">
+      <div class="card-title">
+        Talk to Agent
+        <span class="text-muted text-sm" style="font-weight:400;text-transform:none;letter-spacing:0;">
+          — ask why it took a decision; agent continues its autonomous loop independently
+        </span>
+      </div>
+      <div id="chatHistory" style="min-height:80px;max-height:320px;overflow-y:auto;padding:4px 0;margin-bottom:10px;"></div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input type="text" id="chatInput"
+               placeholder="e.g. 'Why did you flag an anomaly?' or 'What is the current water stress level?'"
+               style="flex:1;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:5px;font-size:13px;"
+               onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendAgentChat();}">
+        <button class="btn-sm" onclick="sendAgentChat()" id="chatSendBtn" style="padding:8px 18px;font-size:13px;">Send</button>
+      </div>
+      <div class="text-muted text-sm mt-2">
+        Each message triggers a separate LangChain invocation — the agent reasons from its current tool state and knowledge graph, not from this conversation history.
+      </div>
+    </div>
+
+    <!-- Full raw JSON dump (collapsible) -->
+    <div class="card mb-4">
+      <div class="card-title" style="cursor:pointer;" onclick="toggleRawDetail()">
+        Raw Detail JSON
+        <span id="rawDetailToggle" class="text-muted text-sm">[click to expand]</span>
+      </div>
+      <pre id="rawDetailJson" style="display:none;font-size:11px;color:var(--muted);white-space:pre-wrap;max-height:300px;overflow-y:auto;margin-top:8px;"></pre>
+    </div>
+
+  </div><!-- /agentDetailPanel -->
+
+</div><!-- /tab-agents -->
+
+<!-- Toast notification -->
+<div class="toast" id="toast"></div>
+
+<!-- ================================================================
+     JAVASCRIPT
+     ================================================================ -->
+<script>
+// ----------------------------------------------------------------
+// STATE
+// ----------------------------------------------------------------
+let API = 'http://localhost:8503';
+let SDT_API = 'http://localhost:8503';
+let PDT_API = 'http://localhost:8503';
+let BPDT_API = 'http://localhost:8503';
+
+let bpdtSse = null, sdtSse = null, pdtSse = null;
+let live = { bpdt:{}, sdt:{}, pdt:{} };
+const _sseState = { bpdt: false, sdt: false, pdt: false };
+let _pollIntervals = [];
+let _ooda_water_budget_7d = null;
+let _lastBpdtAgentPoll = 0;  // epoch ms of last successful BPDT /agents/status
+let _lastSdtAgentPoll  = 0;  // epoch ms of last successful SDT /agents/status
+let _lastPdtAgentPoll  = 0;  // epoch ms of last successful PDT /agents/status
+let _lastAgentApiPoll  = 0;  // alias — kept for backward-compat guards
+
+// Rolling chart data (last N points)
+const MAX_PTS = 40;
+const soilLabels = [], soilVwc10 = [], soilVwc30 = [], soilVwc60 = [];
+const stressLabels = [], stressCwsi = [], stressPsi = [];
+const adminLabels = [], adminVwc = [], adminCwsi = [];
+
+
+const SDT_STATES  = ['OPTIMAL','DEPLETING','CRITICAL','WILTING_RISK','SENSOR_FAULT'];
+const PDT_STATES  = ['UNSTRESSED','MILD_STRESS','MODERATE_STRESS','SEVERE_STRESS','WILTING','RECOVERY'];
+const BPDT_STATES = ['NOMINAL','SOIL_ALERT','PLANT_ALERT','IRRIGATION_PENDING','IRRIGATION_ACTIVE','EMERGENCY','MAINTENANCE'];
+
+// ----------------------------------------------------------------
+// INIT
+// ----------------------------------------------------------------
+document.addEventListener('DOMContentLoaded', () => {
+  buildFsmNodes('fsm_sdt_user',  SDT_STATES);
+  buildFsmNodes('fsm_pdt_user',  PDT_STATES);
+  buildFsmNodes('fsm_bpdt_user', BPDT_STATES);
+  buildFsmNodes('fsm_sdt_admin',  SDT_STATES);
+  buildFsmNodes('fsm_pdt_admin',  PDT_STATES);
+  buildFsmNodes('fsm_bpdt_admin', BPDT_STATES);
+  buildOodaGrid();
+  initCharts();
+  reconnect();
+  prefillCharts();
+  // Populate agent dropdown for the default twin (bpdt)
+  onTwinSelect('bpdt');
+});
+
+// ----------------------------------------------------------------
+// CONFIG
+// ----------------------------------------------------------------
+function reconnect() {
+  // All three twins run unified on one port (main.py mounts all routers on 8503).
+  API      = (document.getElementById('apiBase').value || 'http://localhost:8503').replace(/\/$/, '');
+  BPDT_API = API;
+  SDT_API  = API;
+  PDT_API  = API;
+  _sseState.bpdt = false;
+  _sseState.sdt  = false;
+  _sseState.pdt  = false;
+  closeSse();
+  _pollIntervals.forEach(clearInterval);
+  _pollIntervals = [];
+  openSse();
+  poll();
+}
+
+// ----------------------------------------------------------------
+// SSE
+// ----------------------------------------------------------------
+function openSse() {
+  document.getElementById('connDot').className = 'conn-dot';
+  document.getElementById('connLabel').textContent = 'Connecting…';
+  bpdtSse = connectSse(BPDT_API + '/api/bpdt/stream', 'bpdt');
+  sdtSse  = connectSse(SDT_API  + '/api/sdt/stream',  'sdt');
+  pdtSse  = connectSse(PDT_API  + '/api/pdt/stream',  'pdt');
+}
+
+function connectSse(url, key) {
+  try {
+    const es = new EventSource(url);
+    es.onmessage = (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        live[key] = d;
+        onLiveData(key, d);
+        _sseState[key] = true;
+        refreshConn();
+        document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+      } catch(err) {}
+    };
+    es.onerror = () => {
+      _sseState[key] = false;
+      refreshConn();
+    };
+    return es;
+  } catch(e) {
+    return null;
+  }
+}
+
+function closeSse() {
+  [bpdtSse, sdtSse, pdtSse].forEach(s => { if(s) s.close(); });
+  bpdtSse = sdtSse = pdtSse = null;
+}
+
+function refreshConn() {
+  const dot = document.getElementById('connDot');
+  const lbl = document.getElementById('connLabel');
+  const live_count = Object.values(_sseState).filter(Boolean).length;
+  if (live_count > 0) {
+    dot.className = 'conn-dot live';
+    lbl.textContent = `Live (${live_count}/3 streams)`;
+  } else {
+    dot.className = 'conn-dot error';
+    lbl.textContent = 'Connection error — is the server running?';
+  }
+}
+
+// ----------------------------------------------------------------
+// LIVE DATA HANDLERS
+// ----------------------------------------------------------------
+function onLiveData(key, d) {
+  if (key === 'bpdt') handleBpdt(d);
+  if (key === 'sdt')  handleSdt(d);
+  if (key === 'pdt')  handlePdt(d);
+}
+
+function handleBpdt(d) {
+  const t = new Date().toLocaleTimeString();
+
+  updateFsm('bpdt', d.bpdt_state);
+  updateFsm('sdt',  d.sdt_state);
+  updateFsm('pdt',  d.pdt_state);
+  updateBanner(d);
+
+  setText('m_vwc10', fmt(d.vwc_10cm, 3));
+  setText('m_cwsi',  fmt(d.cwsi, 3));
+  setText('m_et',    fmt(d.et_rate, 2));
+  setText('m_yield', fmt(d.yield_penalty, 1));
+
+  setText('pid_pv',  fmt(d.vwc_10cm, 4) + ' m³/m³');
+  const err = d.vwc_10cm != null ? (0.08 - d.vwc_10cm).toFixed(4) : '—';
+  setText('pid_err', err + (d.vwc_10cm != null ? ' m³/m³' : ''));
+  const out = d.irr_rate_L_hr != null ? d.irr_rate_L_hr.toFixed(2) + ' L/hr' : '—';
+  setText('pid_out', out);
+  setText('pid_active', d.bpdt_state === 'IRRIGATION_ACTIVE' ? 'Yes' : 'No');
+  const pct = d.irr_rate_L_hr != null ? Math.min(100, (d.irr_rate_L_hr / 20) * 100) : 0;
+  document.getElementById('pid_bar').style.width = pct + '%';
+
+  // BC values
+  setText('bc01', fmt(d.vwc_10cm, 4) + ' m³/m³');
+  setText('bc05', fmt(d.depl_rate, 4) + ' m³/m³/hr');
+
+  // Irr badge
+  const irrBadge = document.getElementById('irrStatusBadge');
+  const irrLive  = document.getElementById('irrRateLive');
+  if (d.bpdt_state === 'IRRIGATION_ACTIVE') {
+    irrBadge.className = 'pill pill-blue';
+    irrBadge.textContent = 'Active';
+    irrLive.textContent = d.irr_rate_L_hr != null ? d.irr_rate_L_hr.toFixed(2) + ' L/hr' : '';
+  } else {
+    irrBadge.className = 'pill pill-muted';
+    irrBadge.textContent = 'Inactive';
+    irrLive.textContent = '';
+  }
+
+  // OODA vector
+  updateOodaGrid(d);
+
+  // RL action inference
+  inferAgentActivity(d);
+
+  // Admin chart
+  pushPoint(adminLabels, adminVwc, adminCwsi, t, d.vwc_10cm, d.cwsi);
+  updateChart(chartAdmin, adminLabels, [adminVwc, adminCwsi]);
+
+  // Sim status infer from live data
+  markSimRunning('sim_bpdt', 'sim_fsm_bpdt');
+}
+
+function handleSdt(d) {
+  const t = new Date().toLocaleTimeString();
+  setText('m_vwc10', fmt(d.vwc_10cm, 3));
+  setText('m_vwc30', fmt(d.vwc_30cm, 3));
+
+  // BC-02 vwc_30cm
+  setText('bc02', fmt(d.vwc_30cm, 4) + ' m³/m³');
+  // BC-03 soil_ψ ÷ 1000
+  const bc03raw = d.soil_water_potential_10 != null ? (d.soil_water_potential_10 * 0.001).toFixed(4) : '—';
+  setText('bc03', bc03raw + ' MPa');
+
+  // Time to PWP from depletion rate
+  const depl = d.depletion_rate_avg;
+  const vwc  = d.vwc_10cm;
+  let ttpwp = '—';
+  if (depl != null && depl > 0 && vwc != null) {
+    ttpwp = ((vwc - 0.05) / depl).toFixed(1);
+  }
+  setText('m_ttpwp', ttpwp);
+
+  // Soil chart
+  pushPoint(soilLabels, soilVwc10, soilVwc30, t, d.vwc_10cm, d.vwc_30cm);
+  soilVwc60.push(d.vwc_60cm != null ? d.vwc_60cm : null);
+  if (soilVwc60.length > MAX_PTS) soilVwc60.shift();
+  updateChart(chartSoil, soilLabels, [soilVwc10, soilVwc30, soilVwc60]);
+
+  // Sensor table
+  updateSensorTable(d);
+
+  markSimRunning('sim_sdt', 'sim_fsm_sdt');
+}
+
+function handlePdt(d) {
+  const t = new Date().toLocaleTimeString();
+  setText('m_psi',  fmt(d.leaf_water_potential_mpa, 3));
+  setText('m_cwsi', fmt(d.cwsi, 3));
+  setText('m_yield', fmt(d.yield_penalty_pct, 1));
+
+  // BC-04 transpiration
+  setText('bc04', fmt(d.sap_flow_L_hr, 3) + ' L/hr');
+
+  // Stress chart
+  pushPoint(stressLabels, stressCwsi, stressPsi, t,
+    d.cwsi,
+    d.leaf_water_potential_mpa != null ? Math.abs(d.leaf_water_potential_mpa) : null);
+  updateChart(chartStress, stressLabels, [stressCwsi, stressPsi]);
+
+  // Yield from PDT stream
+  setText('ys_eta', fmt(d.eta_fraction, 3));
+
+  markSimRunning('sim_pdt', 'sim_fsm_pdt');
+}
+
+// ----------------------------------------------------------------
+// BANNER
+// ----------------------------------------------------------------
+function updateBanner(d) {
+  const banner = document.getElementById('statusBanner');
+  const title  = document.getElementById('bannerTitle');
+  const sub    = document.getElementById('bannerSub');
+  const bpdt   = document.getElementById('bannerBpdt');
+  const s = d.bpdt_state || '—';
+  bpdt.textContent = s;
+
+  const maps = {
+    'NOMINAL':             ['rgba(52,211,153,0.08)', 'var(--green)',  '✔', 'System Nominal',          'All conditions within bounds'],
+    'SOIL_ALERT':          ['rgba(251,191,36,0.08)',  'var(--yellow)', '⚠', 'Soil Alert',              'Soil moisture approaching critical — monitor closely'],
+    'PLANT_ALERT':         ['rgba(251,191,36,0.08)',  'var(--yellow)', '⚠', 'Plant Stress Detected',   'Plant showing stress indicators'],
+    'IRRIGATION_PENDING':  ['rgba(249,115,22,0.08)',  'var(--orange)', '⟳', 'Irrigation Pending',     'PID computing irrigation schedule'],
+    'IRRIGATION_ACTIVE':   ['rgba(79,142,247,0.12)',  'var(--accent)', '💧','Irrigation Active',       'Drip system running — check rate and duration'],
+    'EMERGENCY':           ['rgba(248,113,113,0.12)', 'var(--red)',    '🚨','EMERGENCY',               'Immediate intervention required — check field NOW'],
+    'MAINTENANCE':         ['rgba(167,139,250,0.12)', 'var(--purple)', '🔧','Maintenance Mode',        'System in maintenance — manual control only'],
+  };
+  const cfg = maps[s] || ['rgba(136,146,164,0.08)', 'var(--muted)', '?', 'Status Unknown', 'Waiting for data…'];
+  banner.style.background   = cfg[0];
+  banner.style.borderColor  = cfg[1];
+  banner.style.color        = cfg[1];
+  title.textContent  = cfg[3];
+  sub.textContent    = cfg[4];
+  banner.querySelector('span').textContent = cfg[2];
+}
+
+// ----------------------------------------------------------------
+// FSM NODES
+// ----------------------------------------------------------------
+function buildFsmNodes(containerId, states) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = states.map(s => `<div class="fsm-node" id="${containerId}_${s}">${s.replace(/_/g,' ')}</div>`).join('');
+}
+
+function updateFsm(twin, state) {
+  const prefixes = {
+    sdt:  ['fsm_sdt_user', 'fsm_sdt_admin'],
+    pdt:  ['fsm_pdt_user', 'fsm_pdt_admin'],
+    bpdt: ['fsm_bpdt_user', 'fsm_bpdt_admin'],
+  };
+  const states = {sdt: SDT_STATES, pdt: PDT_STATES, bpdt: BPDT_STATES};
+  const badge_ids = {sdt:'adm_sdt_state', pdt:'adm_pdt_state', bpdt:'adm_bpdt_state'};
+
+  (prefixes[twin] || []).forEach(prefix => {
+    (states[twin] || []).forEach(s => {
+      const el = document.getElementById(prefix + '_' + s);
+      if (!el) return;
+      el.className = 'fsm-node' + (s === state ? ' active ' + s : '');
+    });
+  });
+
+  const badge = document.getElementById(badge_ids[twin]);
+  if (badge && state) {
+    badge.textContent = state.replace(/_/g,' ');
+    badge.className   = 'fsm-badge fsm-node ' + state;
+  }
+}
+
+// ----------------------------------------------------------------
+// OODA grid
+// ----------------------------------------------------------------
+const OODA_KEYS = [
+  ['vwc_10cm',           'VWC 10 cm',         'm³/m³'],
+  ['vwc_30cm',           'VWC 30 cm',         'm³/m³'],
+  ['psi_leaf',           'Leaf ψ',             'MPa'],
+  ['cwsi',               'CWSI',               '—'],
+  ['gs_frac',            'gs fraction',        '—'],
+  ['depl_rate',          'Depletion rate',     'm³/m³/hr'],
+  ['et_rate',            'ET rate',            'mm/day'],
+  ['irr_rate_L_hr',      'Irr rate',           'L/hr'],
+  ['yield_penalty',      'Yield penalty',      '%'],
+  ['sdt_state_enc',      'SDT state enc',      '[0–1]'],
+  ['pdt_state_enc',      'PDT state enc',      '[0–1]'],
+  ['bpdt_state_enc',     'BPDT state enc',     '[0–1]'],
+  ['time_since_irr',     'Time since irr',     'hr'],
+  ['water_budget_7d',    'Water budget 7d',    'mm'],
+];
+
+const STATE_ENC_SDT  = {OPTIMAL:0.0, DEPLETING:0.3, CRITICAL:0.7, WILTING_RISK:1.0, SENSOR_FAULT:0.5};
+const STATE_ENC_PDT  = {UNSTRESSED:0.0, MILD_STRESS:0.2, MODERATE_STRESS:0.5, SEVERE_STRESS:0.8, WILTING:1.0, RECOVERY:0.1};
+const STATE_ENC_BPDT = {NOMINAL:0.0, SOIL_ALERT:0.2, PLANT_ALERT:0.3, IRRIGATION_PENDING:0.5, IRRIGATION_ACTIVE:0.6, EMERGENCY:1.0, MAINTENANCE:0.8};
+
+function buildOodaGrid() {
+  const g = document.getElementById('oodaGrid');
+  if (!g) return;
+  g.innerHTML = OODA_KEYS.map(([key, label, unit]) =>
+    `<div class="ooda-item">
+      <span class="ooda-key">${label}<br><span style="font-size:10px;opacity:0.6;">${unit}</span></span>
+      <span class="ooda-val" id="ooda_${key}">—</span>
+    </div>`
+  ).join('');
+}
+
+function updateOodaGrid(d) {
+  const vals = {
+    vwc_10cm:       d.vwc_10cm,
+    vwc_30cm:       live.sdt ? live.sdt.vwc_30cm : null,
+    psi_leaf:       live.pdt ? live.pdt.leaf_water_potential_mpa : null,
+    cwsi:           d.cwsi,
+    gs_frac:        live.pdt ? (live.pdt.stomatal_conductance_mmol != null ? (live.pdt.stomatal_conductance_mmol / 260).toFixed(3) : null) : null,
+    depl_rate:      d.depl_rate,
+    et_rate:        d.et_rate,
+    irr_rate_L_hr:  d.irr_rate_L_hr,
+    yield_penalty:  d.yield_penalty,
+    sdt_state_enc:  STATE_ENC_SDT[d.sdt_state],
+    pdt_state_enc:  STATE_ENC_PDT[d.pdt_state],
+    bpdt_state_enc: STATE_ENC_BPDT[d.bpdt_state],
+    time_since_irr: null,
+    water_budget_7d: _ooda_water_budget_7d,
+  };
+  OODA_KEYS.forEach(([key]) => {
+    const el = document.getElementById('ooda_' + key);
+    if (el) el.textContent = vals[key] != null ? (typeof vals[key] === 'number' ? vals[key].toFixed(3) : vals[key]) : '—';
+  });
+}
+
+// ----------------------------------------------------------------
+// AGENT ACTIVITY (inferred from FSM state — fallback until API data arrives)
+// ----------------------------------------------------------------
+function inferAgentActivity(d) {
+  // Skip inference once real API data has been received
+  if (Date.now() - _lastBpdtAgentPoll < 90000) return;
+  const s = d.bpdt_state;
+  const agents = [
+    { id: 0, action: 'Coordinating sub-twin signals' },
+    { id: 1, action: s === 'IRRIGATION_ACTIVE' ? 'Executing irrigation schedule' : s === 'IRRIGATION_PENDING' ? 'Computing irrigation rate' : 'Monitoring soil deficit' },
+    { id: 2, action: d.cwsi > 0.45 ? 'Anomaly flagged: high CWSI' : 'No anomaly detected' },
+    { id: 3, action: 'Computing WUE vs baseline' },
+    { id: 4, action: 'Updating water use ledger' },
+  ];
+  agents.forEach(a => {
+    const dot = document.getElementById('bpdt_ag' + a.id + 'dot');
+    const act = document.getElementById('bpdt_ag' + a.id + 'act');
+    if (dot) dot.className = 'agent-dot';
+    if (act) act.textContent = a.action;
+  });
+}
+
+// ----------------------------------------------------------------
+// CHARTS
+// ----------------------------------------------------------------
+let chartSoil, chartStress, chartAdmin;
+
+function initCharts() {
+  Chart.defaults.color = '#8892a4';
+  Chart.defaults.borderColor = '#2e3348';
+
+  const fc    = {type:'line', borderDash:[4,4], borderColor:'rgba(52,211,153,0.3)', fill:false, pointRadius:0, data:[], label:'FC (0.10)'};
+  const pwp   = {type:'line', borderDash:[2,4], borderColor:'rgba(248,113,113,0.3)', fill:false, pointRadius:0, data:[], label:'PWP (0.05)'};
+
+  chartSoil = new Chart(document.getElementById('chartSoil').getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: soilLabels,
+      datasets: [
+        { label:'VWC 10 cm', data: soilVwc10, borderColor:'var(--accent)', fill:false, tension:0.3, pointRadius:2 },
+        { label:'VWC 30 cm', data: soilVwc30, borderColor:'var(--cyan)',   fill:false, tension:0.3, pointRadius:2 },
+        { label:'VWC 60 cm', data: soilVwc60, borderColor:'var(--purple)', fill:false, tension:0.3, pointRadius:2 },
+        {...fc,  data: Array(MAX_PTS).fill(0.10)},
+        {...pwp, data: Array(MAX_PTS).fill(0.05)},
+      ],
+    },
+    options: chartOpts('m³/m³', 0, 0.5),
+  });
+
+  chartStress = new Chart(document.getElementById('chartStress').getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: stressLabels,
+      datasets: [
+        { label:'CWSI', data: stressCwsi, borderColor:'var(--orange)', fill:false, tension:0.3, pointRadius:2, yAxisID:'y' },
+        { label:'|ψ leaf| MPa', data: stressPsi, borderColor:'var(--red)',    fill:false, tension:0.3, pointRadius:2, yAxisID:'y2' },
+      ],
+    },
+    options: {
+      ...chartOpts('CWSI', 0, 1),
+      scales: {
+        x: { ticks:{ maxTicksLimit:6, maxRotation:0 }, grid:{color:'rgba(46,51,72,0.5)'} },
+        y:  { title:{display:true,text:'CWSI'}, min:0, max:1, grid:{color:'rgba(46,51,72,0.5)'} },
+        y2: { title:{display:true,text:'|ψ| MPa'}, position:'right', min:0, max:3.0, grid:{display:false} },
+      },
+      plugins: { legend:{position:'bottom', labels:{boxWidth:10,font:{size:10}}} },
+      animation:false, responsive:true, maintainAspectRatio:false,
+    },
+  });
+
+  chartAdmin = new Chart(document.getElementById('chartAdmin').getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: adminLabels,
+      datasets: [
+        { label:'VWC 10 cm', data: adminVwc,  borderColor:'var(--accent)', fill:false, tension:0.3, pointRadius:2, yAxisID:'y' },
+        { label:'CWSI',      data: adminCwsi, borderColor:'var(--orange)', fill:false, tension:0.3, pointRadius:2, yAxisID:'y2' },
+      ],
+    },
+    options: {
+      scales: {
+        x: { ticks:{ maxTicksLimit:6, maxRotation:0 }, grid:{color:'rgba(46,51,72,0.5)'} },
+        y:  { title:{display:true,text:'VWC m³/m³'}, min:0, max:0.5, grid:{color:'rgba(46,51,72,0.5)'} },
+        y2: { title:{display:true,text:'CWSI'}, position:'right', min:0, max:1, grid:{display:false} },
+      },
+      plugins: { legend:{position:'bottom', labels:{boxWidth:10,font:{size:10}}} },
+      animation:false, responsive:true, maintainAspectRatio:false,
+    },
+  });
+}
+
+function chartOpts(yLabel, yMin, yMax) {
+  return {
+    scales: {
+      x: { ticks:{ maxTicksLimit:6, maxRotation:0 }, grid:{color:'rgba(46,51,72,0.5)'} },
+      y: { title:{display:true,text:yLabel}, min:yMin, max:yMax, grid:{color:'rgba(46,51,72,0.5)'} },
+    },
+    plugins: { legend:{position:'bottom', labels:{boxWidth:10,font:{size:10}}} },
+    animation: false, responsive:true, maintainAspectRatio:false,
+  };
+}
+
+function pushPoint(labels, arr1, arr2, label, v1, v2) {
+  labels.push(label);
+  arr1.push(v1 != null ? v1 : null);
+  arr2.push(v2 != null ? v2 : null);
+  if (labels.length > MAX_PTS) { labels.shift(); arr1.shift(); arr2.shift(); }
+}
+
+function updateChart(chart, labels, datasets) {
+  chart.data.labels = [...labels];
+  datasets.forEach((d, i) => {
+    if (chart.data.datasets[i]) chart.data.datasets[i].data = [...d];
+  });
+  chart.update('none');
+}
+
+// ----------------------------------------------------------------
+// REST POLLING
+// ----------------------------------------------------------------
+function poll() {
+  pollBpdt();
+  pollYield();
+  pollWiltingForecast();
+  pollAdminData();
+  pollAgentStatus();
+  pollSdtAgentStatus();
+  pollPdtAgentStatus();
+  pollOodaStatus();
+  pollOverseerLatest();
+  pollAgentHistory();
+  _pollIntervals.push(setInterval(pollBpdt,              12000));
+  _pollIntervals.push(setInterval(pollYield,             30000));
+  _pollIntervals.push(setInterval(pollWiltingForecast,   30000));
+  _pollIntervals.push(setInterval(pollAdminData,         15000));
+  _pollIntervals.push(setInterval(pollAgentStatus,       60000));
+  _pollIntervals.push(setInterval(pollSdtAgentStatus,    60000));
+  _pollIntervals.push(setInterval(pollPdtAgentStatus,    60000));
+  _pollIntervals.push(setInterval(pollOodaStatus,        30000));
+  _pollIntervals.push(setInterval(pollOverseerLatest,   120000));
+  _pollIntervals.push(setInterval(pollAgentHistory,     120000));
+  _startAgentDetailPoller();
+}
+
+async function pollBpdt() {
+  try {
+    const [status, budget, irr, ledger] = await Promise.all([
+      apiFetch(BPDT_API + '/api/bpdt/status'),
+      apiFetch(BPDT_API + '/api/bpdt/water-budget'),
+      apiFetch(BPDT_API + '/api/bpdt/irrigation/history'),
+      apiFetch(BPDT_API + '/api/bpdt/ledger'),
+    ]);
+    if (status) updateStatusRest(status);
+    if (budget) updateWaterBudget(budget);
+    if (irr)    updateIrrEvents(irr);
+    if (ledger) updateLedger(ledger);
+  } catch(e) {}
+}
+
+function updateStatusRest(d) {
+  // Only fill fields not already filled by SSE
+  if (!live.bpdt || !live.bpdt.vwc_10cm) setText('m_vwc10', fmt(d.vwc_10cm, 3));
+  if (!live.bpdt || !live.bpdt.cwsi)     setText('m_cwsi',  fmt(d.cwsi, 3));
+  setText('wb_rate', d.irrigation_rate_L_hr != null ? d.irrigation_rate_L_hr.toFixed(2) + ' L/hr' : '—');
+}
+
+function updateWaterBudget(d) {
+  _ooda_water_budget_7d = d.rolling_7d_balance_mm != null ? d.rolling_7d_balance_mm : null;
+  setText('wb_balance', d.rolling_7d_balance_mm != null ? d.rolling_7d_balance_mm.toFixed(1) + ' mm' : '—');
+  setText('wb_irr',     d.total_irrigation_mm   != null ? d.total_irrigation_mm.toFixed(1)   + ' mm' : '—');
+  setText('wb_et',      d.et_loss_rate_mm_day   != null ? d.et_loss_rate_mm_day.toFixed(2)   + ' mm/day' : '—');
+  setText('wb_rain',    d.rain_mm_today          != null ? d.rain_mm_today.toFixed(1)          + ' mm' : '0 mm');
+  setText('wb_rate',    d.irrigation_rate_L_hr  != null ? d.irrigation_rate_L_hr.toFixed(2)  + ' L/hr' : '—');
+}
+
+function updateIrrEvents(d) {
+  const tbody = document.getElementById('irrEventsTbody');
+  if (!tbody) return;
+  const events = (d.events || []).slice(0, 20);
+  if (events.length === 0) { tbody.innerHTML = '<tr><td colspan="3" class="text-muted">No events yet</td></tr>'; return; }
+  tbody.innerHTML = events.map(e => {
+    const ts = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '—';
+    const detail = e.detail ? JSON.stringify(e.detail).substring(0,60) : '';
+    return `<tr><td>${ts}</td><td><span class="pill ${severityPill(e.severity)}">${(e.event_type||'').replace(/_/g,' ')}</span></td><td class="text-muted">${detail}</td></tr>`;
+  }).join('');
+}
+
+function updateLedger(d) {
+  setText('wue_irr', d.total_water_L != null ? d.total_water_L.toFixed(1) + ' L' : '—');
+  setText('wue_wp',  d.water_productivity_kg_m3 != null ? d.water_productivity_kg_m3.toFixed(3) + ' kg/m³' : '—');
+}
+
+async function pollYield() {
+  try {
+    const d = await apiFetch(PDT_API + '/api/pdt/yield/penalty');
+    if (!d) return;
+    setText('ys_penalty', fmt(d.yield_penalty_pct, 1) + ' %');
+    setText('ys_ya',      fmt(d.ya_ymax_fraction, 4));
+  } catch(e) {}
+}
+
+async function pollWiltingForecast() {
+  try {
+    const d = await apiFetch(PDT_API + '/api/pdt/wilting/forecast');
+    if (!d) return;
+    const ttw = d.time_to_wilting_hr;
+    setText('m_ttw', ttw != null ? ttw.toFixed(1) : '—');
+  } catch(e) {}
+}
+
+async function pollAdminData() {
+  try {
+    const [cfg, wue, fullEvt, stressEvt] = await Promise.all([
+      apiFetch(BPDT_API + '/api/bpdt/config/current'),
+      apiFetch(BPDT_API + '/api/bpdt/analytics/wue'),
+      apiFetch(BPDT_API + '/api/bpdt/irrigation/history?n=100'),
+      apiFetch(PDT_API  + '/api/pdt/history/stress?n=100'),
+    ]);
+    if (cfg) updateConfig(cfg);
+    if (wue) updateWue(wue);
+    updateFullLog(fullEvt, stressEvt);
+  } catch(e) {}
+
+  // Mark KG as static/running (no live endpoint)
+  markPill('sim_kg', 'Seeded', 'pill-purple');
+  markPill('sim_mas', 'Running', 'pill-green');
+}
+
+function updateConfig(d) {
+  setText('cfg_asset',   d.asset_id || '—');
+  setText('cfg_sdt',     d.pod_config?.sdt_id || '—');
+  setText('cfg_pdt',     d.pod_config?.pdt_id || '—');
+  setText('cfg_hotswap', d.hot_swap_supported ? 'Yes' : 'No');
+  setText('cfg_version', d.version || '—');
+}
+
+function updateWue(d) {
+  if (!d.wue) return;
+  setText('wue_irr', d.wue.total_irrigation_applied_L != null ? d.wue.total_irrigation_applied_L.toFixed(1) + ' L' : '—');
+  setText('wue_wp',  d.wue.water_productivity_kg_m3  != null ? d.wue.water_productivity_kg_m3.toFixed(3) + ' kg/m³' : '—');
+}
+
+function updateFullLog(irrData, stressData) {
+  const tbody = document.getElementById('fullEventTbody');
+  if (!tbody) return;
+  let events = [];
+  if (irrData?.events)    events = events.concat(irrData.events.map(e => ({...e, twin:'BPDT'})));
+  if (stressData?.events) events = events.concat(stressData.events.map(e => ({...e, twin:'PDT'})));
+  events.sort((a,b) => (b.timestamp||'') > (a.timestamp||'') ? 1 : -1);
+  setText('evtCount', `(${events.length} events)`);
+  if (events.length === 0) { tbody.innerHTML = '<tr><td colspan="5" class="text-muted">No events logged</td></tr>'; return; }
+  tbody.innerHTML = events.slice(0,60).map(e => {
+    const ts = e.timestamp ? new Date(e.timestamp).toLocaleString() : '—';
+    const detail = e.detail ? JSON.stringify(e.detail).substring(0,80) : '';
+    return `<tr>
+      <td class="text-muted">${ts}</td>
+      <td><span class="pill ${severityPill(e.severity)}">${(e.event_type||'').replace(/_/g,' ')}</span></td>
+      <td>${e.twin||'—'}</td>
+      <td><span class="pill ${severityPill(e.severity)}">${e.severity||'—'}</span></td>
+      <td class="text-muted">${detail}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ----------------------------------------------------------------
+// SENSOR TABLE
+// ----------------------------------------------------------------
+function updateSensorTable(sdt) {
+  const tbody = document.getElementById('sensorTbody');
+  if (!tbody) return;
+  const pdt = live.pdt || {};
+  const bpdt = live.bpdt || {};
+  const rows = [
+    ['VWC 10 cm (TEROS-12)', fmt(sdt.vwc_10cm, 4) + ' m³/m³',       sdt.vwc_10cm != null && sdt.vwc_10cm < 0.05 ? 'CRITICAL' : 'OK'],
+    ['VWC 30 cm (TEROS-12)', fmt(sdt.vwc_30cm, 4) + ' m³/m³',       sdt.vwc_30cm != null && sdt.vwc_30cm < 0.05 ? 'CRITICAL' : 'OK'],
+    ['VWC 60 cm (TEROS-12)', fmt(sdt.vwc_60cm, 4) + ' m³/m³',       'OK'],
+    ['Soil ψ 10 cm (MPS-6)',  fmt(sdt.soil_water_potential_10) + ' kPa', 'OK'],
+    ['Soil temp (DS18B20)',   fmt(sdt.soil_temp_10cm) + ' °C',        'OK'],
+    ['Sensor divergence',     sdt.sensor_divergence_flag ? 'YES' : 'No', sdt.sensor_divergence_flag ? 'WARN' : 'OK'],
+    ['CWSI (canopy cam)',      fmt(pdt.cwsi, 3),                        pdt.cwsi != null && pdt.cwsi > 0.70 ? 'CRITICAL' : pdt.cwsi != null && pdt.cwsi > 0.45 ? 'WARN' : 'OK'],
+    ['Leaf ψ (PMS-1000)',      fmt(pdt.leaf_water_potential_mpa) + ' MPa', pdt.leaf_water_potential_mpa != null && pdt.leaf_water_potential_mpa < -1.8 ? 'CRITICAL' : 'OK'],
+    ['gs (LI-600)',            fmt(pdt.stomatal_conductance_mmol) + ' mmol/m²/s', 'OK'],
+    ['Sap flow (Granier TDP)', fmt(pdt.sap_flow_L_hr) + ' L/hr',      'OK'],
+    ['RWC',                    fmt(pdt.relative_water_content, 3),     'OK'],
+    ['ET rate',                fmt(bpdt.et_rate, 2) + ' mm/day',      'OK'],
+    ['Depletion rate',         fmt(bpdt.depl_rate, 5) + ' m³/m³/hr', 'OK'],
+    ['Irrigation rate',        fmt(bpdt.irr_rate_L_hr, 2) + ' L/hr', 'OK'],
+  ];
+  tbody.innerHTML = rows.map(([label, val, status]) =>
+    `<tr><td>${label}</td><td>${val}</td><td><span class="pill ${statusPill(status)}">${status}</span></td></tr>`
+  ).join('');
+}
+
+// ----------------------------------------------------------------
+// IRRIGATION CONTROL
+// ----------------------------------------------------------------
+async function startIrrigation() {
+  const rate     = parseFloat(document.getElementById('irrRate').value)     || 8;
+  const duration = parseFloat(document.getElementById('irrDuration').value) || 30;
+  const reason   = document.getElementById('irrReason').value || 'Manual';
+  const btn = document.getElementById('btnStartIrr');
+  btn.disabled = true;
+  try {
+    const r = await apiFetch(BPDT_API + '/api/bpdt/irrigation/trigger', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ rate_L_hr: rate, duration_min: duration, reason }),
+    });
+    if (r) toast('Irrigation started at ' + rate + ' L/hr', 'green');
+    else    toast('Irrigation command sent (check status)', 'yellow');
+  } catch(e) {
+    toast('Error: ' + e.message, 'red');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function stopIrrigation() {
+  const btn = document.getElementById('btnStopIrr');
+  btn.disabled = true;
+  try {
+    const r = await apiFetch(BPDT_API + '/api/bpdt/irrigation/stop', { method: 'POST' });
+    if (r) toast('Irrigation stopped', 'green');
+  } catch(e) {
+    toast('Error: ' + e.message, 'red');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ----------------------------------------------------------------
+// FIELD OBSERVATION
+// ----------------------------------------------------------------
+async function submitObservation() {
+  const body = {
+    observer:           document.getElementById('obsObserver').value,
+    visual_stress_level: document.getElementById('obsStress').value,
+    notes:              document.getElementById('obsNotes').value,
+    field_vwc_estimate: parseFloat(document.getElementById('obsVwc').value) || null,
+    leaf_roll_observed: document.getElementById('obsLeafRoll').value === 'true',
+  };
+  try {
+    const r = await apiFetch(PDT_API + '/api/pdt/physiologist/score', {
+      method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+    });
+    if (r) toast('Field observation logged successfully', 'green');
+  } catch(e) {
+    toast('Error: ' + e.message, 'red');
+  }
+}
+
+// ----------------------------------------------------------------
+// HOT SWAP
+// ----------------------------------------------------------------
+async function triggerHotSwap() {
+  const role  = document.getElementById('swapRole').value;
+  const cfgId = document.getElementById('swapConfigId').value;
+  try {
+    const r = await apiFetch(BPDT_API + '/api/bpdt/config/swap', {
+      method: 'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ twin_role: role, new_config_id: cfgId }),
+    });
+    if (r) {
+      document.getElementById('swapResult').textContent = r.message || 'Hot-swap initiated';
+      toast('Hot-swap queued for ' + role.toUpperCase(), 'yellow');
+    }
+  } catch(e) {
+    toast('Error: ' + e.message, 'red');
+  }
+}
+
+// ----------------------------------------------------------------
+// CHART PREFILL  (load historical data on page open)
+// ----------------------------------------------------------------
+async function prefillCharts() {
+  try {
+    const [sdtHist, pdtHist] = await Promise.all([
+      apiFetch(SDT_API + '/api/sdt/telemetry/history?minutes=120&fields=vwc_10cm,vwc_30cm,vwc_60cm'),
+      apiFetch(PDT_API + '/api/pdt/telemetry/history?minutes=120&fields=cwsi,leaf_water_potential_mpa'),
+    ]);
+
+    if (sdtHist?.fields) {
+      const v10 = sdtHist.fields.vwc_10cm || [];
+      const v30 = sdtHist.fields.vwc_30cm || [];
+      const v60 = sdtHist.fields.vwc_60cm || [];
+      // Merge all timestamps across the three fields
+      const tsMap = {};
+      [[v10,'v10'],[v30,'v30'],[v60,'v60']].forEach(([arr, key]) =>
+        arr.forEach(pt => { if (!tsMap[pt.ts]) tsMap[pt.ts] = {}; tsMap[pt.ts][key] = pt.value; })
+      );
+      Object.keys(tsMap).sort((a,b) => a - b).slice(-MAX_PTS).forEach(ts => {
+        const pt = tsMap[ts];
+        const label = new Date(+ts * 1000).toLocaleTimeString();
+        soilLabels.push(label);
+        soilVwc10.push(pt.v10 ?? null);
+        soilVwc30.push(pt.v30 ?? null);
+        soilVwc60.push(pt.v60 ?? null);
+        adminLabels.push(label);
+        adminVwc.push(pt.v10 ?? null);
+      });
+      updateChart(chartSoil,  soilLabels, [soilVwc10, soilVwc30, soilVwc60]);
+    }
+
+    if (pdtHist?.fields) {
+      const cwsi = pdtHist.fields.cwsi || [];
+      const psi  = pdtHist.fields.leaf_water_potential_mpa || [];
+      const tsMap = {};
+      [[cwsi,'cwsi'],[psi,'psi']].forEach(([arr, key]) =>
+        arr.forEach(pt => { if (!tsMap[pt.ts]) tsMap[pt.ts] = {}; tsMap[pt.ts][key] = pt.value; })
+      );
+      Object.keys(tsMap).sort((a,b) => a - b).slice(-MAX_PTS).forEach(ts => {
+        const pt = tsMap[ts];
+        stressLabels.push(new Date(+ts * 1000).toLocaleTimeString());
+        stressCwsi.push(pt.cwsi ?? null);
+        stressPsi.push(pt.psi != null ? Math.abs(pt.psi) : null);
+      });
+      // Pad adminCwsi to match adminLabels length
+      while (adminCwsi.length < adminLabels.length) adminCwsi.push(null);
+      updateChart(chartStress, stressLabels, [stressCwsi, stressPsi]);
+    }
+
+    updateChart(chartAdmin, adminLabels, [adminVwc, adminCwsi]);
+  } catch(e) {}
+}
+
+// ----------------------------------------------------------------
+// AGENT STATUS HELPERS
+// ----------------------------------------------------------------
+function _applyAgentRow(prefix, idx, a) {
+  const dot = document.getElementById(prefix + '_ag' + idx + 'dot');
+  const act = document.getElementById(prefix + '_ag' + idx + 'act');
+  if (dot) {
+    dot.style.removeProperty('background');
+    if      (a.severity === 'critical') { dot.className = 'agent-dot'; dot.style.background = 'var(--red)'; }
+    else if (a.severity === 'warning')  { dot.className = 'agent-dot'; dot.style.background = 'var(--yellow)'; }
+    else if (a.anomaly)                 { dot.className = 'agent-dot'; }
+    else                                { dot.className = 'agent-dot idle'; }
+  }
+  if (act) {
+    const ts    = a.ts_s ? ' @ ' + new Date(a.ts_s * 1000).toLocaleTimeString() : '';
+    const label = (a.action && a.action !== 'monitoring' && a.action !== 'pending')
+                ? a.action : 'monitoring';
+    const snip  = a.detail ? ': ' + a.detail.substring(0, 45) : '';
+    act.textContent = `${label}${snip}${ts}`;
+  }
+  return a.detail || '';
+}
+
+// Track most recent non-empty LLM detail across all twins for "Latest LLM Analysis" panel
+let _latestLlmDetail = { text: '', ts: 0, agent: '' };
+function _maybeUpdateLlmPanel(agentName, detail, ts_s) {
+  if (!detail) return;
+  const t = ts_s ? ts_s * 1000 : Date.now();
+  if (t > _latestLlmDetail.ts) {
+    _latestLlmDetail = { text: detail, ts: t, agent: agentName };
+    const el = document.getElementById('llmLatestAnalysis');
+    if (el) el.textContent = `[${agentName}] ${detail}`;
+  }
+}
+
+// ----------------------------------------------------------------
+// REAL AGENT STATUS  (from /api/bpdt/agents/status)
+// ----------------------------------------------------------------
+// Keys must match the agent_name class attribute (lowercase_underscore), not the class name
+const _BPDT_AGENT_IDX = {
+  'system_integration': 0, 'irrigation_decision': 1,
+  'anomaly_detection':  2, 'water_efficiency': 3, 'ledger': 4,
+};
+const _BPDT_AGENT_NAMES = ['system_integration','irrigation_decision','anomaly_detection','water_efficiency','ledger'];
+const _SDT_AGENT_IDX = {
+  'moisture_depletion': 0, 'sensor_validation': 1,
+  'hydraulic_property': 2, 'et_forecast': 3,
+};
+const _PDT_AGENT_IDX = {
+  'stress_classification': 0, 'wilting_prediction': 1,
+  'transpiration': 2, 'photosynthesis': 3, 'yield_penalty': 4,
+};
+
+async function pollAgentStatus() {
+  try {
+    const d = await apiFetch(BPDT_API + '/api/bpdt/agents/status');
+    if (!d?.agents) return;
+    _lastBpdtAgentPoll = _lastAgentApiPoll = Date.now();
+    d.agents.forEach(a => {
+      const i = _BPDT_AGENT_IDX[a.agent_name];
+      if (i == null) return;
+      _maybeUpdateLlmPanel(a.agent_name, a.detail, a.ts_s);
+      _applyAgentRow('bpdt', i, a);
+    });
+    markPill('sim_mas', 'Running', 'pill-green');
+  } catch(e) {}
+}
+
+async function pollSdtAgentStatus() {
+  try {
+    const d = await apiFetch(SDT_API + '/api/sdt/agents/status');
+    if (!d?.agents) return;
+    _lastSdtAgentPoll = Date.now();
+    d.agents.forEach(a => {
+      const i = _SDT_AGENT_IDX[a.agent_name];
+      if (i == null) return;
+      _maybeUpdateLlmPanel(a.agent_name, a.detail, a.ts_s);
+      _applyAgentRow('sdt', i, a);
+    });
+  } catch(e) {}
+}
+
+async function pollPdtAgentStatus() {
+  try {
+    const d = await apiFetch(PDT_API + '/api/pdt/agents/status');
+    if (!d?.agents) return;
+    _lastPdtAgentPoll = Date.now();
+    d.agents.forEach(a => {
+      const i = _PDT_AGENT_IDX[a.agent_name];
+      if (i == null) return;
+      _maybeUpdateLlmPanel(a.agent_name, a.detail, a.ts_s);
+      _applyAgentRow('pdt', i, a);
+    });
+  } catch(e) {}
+}
+
+// ----------------------------------------------------------------
+// OODA LAST DECISION  (from /api/bpdt/ooda/status)
+// ----------------------------------------------------------------
+async function pollOodaStatus() {
+  try {
+    const d = await apiFetch(BPDT_API + '/api/bpdt/ooda/status');
+    if (!d?.last_cycle) return;
+    const c = d.last_cycle;
+    const riskColors = { critical: 'var(--red)', high: 'var(--orange)', medium: 'var(--yellow)', low: 'var(--green)' };
+    setText('ooda_last_action', c.action || '—');
+    setText('ooda_last_reason', c.reason || '—');
+    setText('ooda_last_ts', c.ts_s ? new Date(c.ts_s * 1000).toLocaleTimeString() : '—');
+    const riskEl = document.getElementById('ooda_last_risk');
+    if (riskEl) {
+      riskEl.textContent = c.risk_level || '—';
+      riskEl.style.color = riskColors[c.risk_level] || 'var(--text)';
+    }
+  } catch(e) {}
+}
+
+// ----------------------------------------------------------------
+// AUTONOMOUS OVERSEER LATEST (from /api/bpdt/ooda/overseer/latest)
+// ----------------------------------------------------------------
+async function pollOverseerLatest() {
+  try {
+    const d = await apiFetch(BPDT_API + '/api/bpdt/ooda/overseer/latest');
+    if (!d?.overseer_latest) return;
+    const o = d.overseer_latest;
+    const riskColors = { critical: 'var(--red)', high: 'var(--orange)', medium: 'var(--yellow)', low: 'var(--green)' };
+
+    setText('overseer_action', o.action || '—');
+
+    const riskEl = document.getElementById('overseer_risk');
+    if (riskEl) {
+      riskEl.textContent = o.risk_level || '—';
+      riskEl.style.color = riskColors[o.risk_level] || 'var(--text)';
+    }
+
+    const goals = Array.isArray(o.goals_addressed) && o.goals_addressed.length
+      ? o.goals_addressed.join(', ')
+      : '—';
+    setText('overseer_goals', goals);
+
+    const qCount = o.agent_queries_count ?? 0;
+    setText('overseer_queries', qCount === 0 ? '0 (no agent queries)' : `${qCount} agent queries`);
+
+    const reasoning = o.reasoning || '—';
+    const reasonEl = document.getElementById('overseer_reasoning');
+    if (reasonEl) reasonEl.textContent = reasoning.length > 350 ? reasoning.slice(0, 350) + '…' : reasoning;
+
+    const badge = document.getElementById('overseer_driven_badge');
+    if (badge) {
+      if (o.overseer_driven) {
+        badge.textContent = 'LLM-driven';
+        badge.className = 'pill pill-blue';
+      } else {
+        badge.textContent = o.ts_s ? 'rule-based fallback' : 'pending';
+        badge.className = 'pill pill-muted';
+      }
+    }
+  } catch(e) {}
+}
+
+// ----------------------------------------------------------------
+// MAS DECISION HISTORY  (from /api/bpdt/agents/history — MongoDB)
+// ----------------------------------------------------------------
+async function pollAgentHistory() {
+  try {
+    const d = await apiFetch(BPDT_API + '/api/bpdt/agents/history?n=60');
+    if (!d?.events) return;
+    updateMasHistory(d);
+  } catch(e) {}
+}
+
+function updateMasHistory(d) {
+  const tbody = document.getElementById('masHistTbody');
+  const count = document.getElementById('masHistCount');
+  if (!tbody) return;
+  if (count) count.textContent = `(${d.count || 0} records)`;
+  const events = d.events || [];
+  if (events.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-muted">No decisions persisted yet — waiting for first MAS cycle</td></tr>';
+    return;
+  }
+  tbody.innerHTML = events.map(e => {
+    const p = e.payload || e;   // payload key set by MAS, or top-level if already flat
+    const ts = e.timestamp
+      ? new Date(e.timestamp).toLocaleTimeString()
+      : (p.ts_s ? new Date(p.ts_s * 1000).toLocaleTimeString() : '—');
+    const agentShort = (p.agent_name || e.event_type || '—')
+      .replace('mas_agent_', '').replace(/Agent$/, '');
+    const anomalyBadge = p.anomaly
+      ? '<span class="pill pill-yellow">Yes</span>'
+      : '<span class="pill pill-muted">No</span>';
+    const sevCls = p.severity === 'critical' ? 'pill-red'
+                 : p.severity === 'warning'  ? 'pill-yellow'
+                 : 'pill-blue';
+    const detail = (p.detail || '').substring(0, 60);
+    return `<tr>
+      <td class="text-muted">${ts}</td>
+      <td style="font-weight:600;">${agentShort}</td>
+      <td>${anomalyBadge}</td>
+      <td>${p.action || '—'}</td>
+      <td><span class="pill ${sevCls}">${p.severity || '—'}</span></td>
+      <td class="text-muted">${detail}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ----------------------------------------------------------------
+// HELPERS
+// ----------------------------------------------------------------
+function showTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  const idx = { user: 0, admin: 1, agents: 2 };
+  const tabs = document.querySelectorAll('.tab');
+  if (tabs[idx[name] ?? 0]) tabs[idx[name] ?? 0].classList.add('active');
+}
+
+async function apiFetch(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) return null;
+  return r.json();
+}
+
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+function fmt(v, dp=2) {
+  if (v == null || v === undefined) return '—';
+  if (typeof v === 'number') return v.toFixed(dp);
+  return v;
+}
+
+function severityPill(sev) {
+  const map = { critical:'pill-red', warning:'pill-yellow', info:'pill-blue', error:'pill-red' };
+  return map[sev] || 'pill-muted';
+}
+
+function statusPill(s) {
+  if (s === 'OK') return 'pill-green';
+  if (s === 'WARN') return 'pill-yellow';
+  if (s === 'CRITICAL') return 'pill-red';
+  return 'pill-muted';
+}
+
+function markSimRunning(...ids) {
+  ids.forEach(id => markPill(id, 'Running', 'pill-green'));
+}
+
+function markPill(id, label, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'pill ' + cls;
+  el.textContent = label;
+}
+
+function toast(msg, color) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.borderColor = color === 'green' ? 'var(--green)' : color === 'red' ? 'var(--red)' : 'var(--yellow)';
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+// ----------------------------------------------------------------
+// AGENT INSPECTOR
+// ----------------------------------------------------------------
+let _selectedAgent = '';
+let _selectedTwin  = 'bpdt';
+let _agentChatHistory = [];
+let _agentDetailData  = null;
+
+const TWIN_AGENTS = {
+  bpdt: [
+    { value: 'system_integration',    label: 'SystemIntegrationAgent  (P10) · system_oversight' },
+    { value: 'irrigation_decision',   label: 'IrrigationDecisionAgent (P9)  · irrigation_management' },
+    { value: 'anomaly_detection',     label: 'AnomalyDetectionAgent   (P8)  · system_diagnostics' },
+    { value: 'water_efficiency',      label: 'WaterEfficiencyAgent    (P6)  · resource_management' },
+    { value: 'ledger',                label: 'LedgerAgent             (P5)  · reporting' },
+  ],
+  sdt: [
+    { value: 'moisture_depletion',    label: 'MoistureDepletionAgent  (P10) · hydrology' },
+    { value: 'sensor_validation',     label: 'SensorValidationAgent   (P9)  · sensor_health' },
+    { value: 'hydraulic_property',    label: 'HydraulicPropertyAgent  (P8)  · soil_physics' },
+    { value: 'et_forecast',           label: 'ETForecastAgent         (P7)  · agro_meteorology' },
+  ],
+  pdt: [
+    { value: 'stress_classification', label: 'StressClassificationAgent (P10) · plant_physiology' },
+    { value: 'wilting_prediction',    label: 'WiltingPredictionAgent   (P9)  · plant_physiology' },
+    { value: 'transpiration',         label: 'TranspirationAgent       (P8)  · plant_hydraulics' },
+    { value: 'photosynthesis',        label: 'PhotosynthesisAgent      (P6)  · plant_physiology' },
+    { value: 'yield_penalty',         label: 'YieldPenaltyAgent        (P5)  · agronomy' },
+  ],
+};
+
+const TWIN_API_PREFIX = { bpdt: '/api/bpdt', sdt: '/api/sdt', pdt: '/api/pdt' };
+
+const AGENT_DISPLAY_NAMES = {
+  // BPDT
+  system_integration: 'SystemIntegrationAgent', irrigation_decision: 'IrrigationDecisionAgent',
+  anomaly_detection: 'AnomalyDetectionAgent', water_efficiency: 'WaterEfficiencyAgent', ledger: 'LedgerAgent',
+  // SDT
+  moisture_depletion: 'MoistureDepletionAgent', sensor_validation: 'SensorValidationAgent',
+  hydraulic_property: 'HydraulicPropertyAgent', et_forecast: 'ETForecastAgent',
+  // PDT
+  stress_classification: 'StressClassificationAgent', wilting_prediction: 'WiltingPredictionAgent',
+  transpiration: 'TranspirationAgent', photosynthesis: 'PhotosynthesisAgent', yield_penalty: 'YieldPenaltyAgent',
+};
+
+function _agentApiBase() {
+  return API + (TWIN_API_PREFIX[_selectedTwin] || '/api/bpdt');
+}
+
+function onTwinSelect(twin) {
+  _selectedTwin = twin;
+  _selectedAgent = '';
+  _agentChatHistory = [];
+  _agentDetailData  = null;
+  document.getElementById('agentDetailPanel').style.display = 'none';
+  // Repopulate agent dropdown
+  const sel = document.getElementById('agentSelect');
+  const agents = TWIN_AGENTS[twin] || [];
+  sel.innerHTML = '<option value="">— Choose an agent —</option>' +
+    agents.map(a => `<option value="${a.value}">${a.label}</option>`).join('');
+}
+
+function selectAgent(name) {
+  _selectedAgent = name;
+  _agentChatHistory = [];
+  _agentDetailData  = null;
+  if (name) {
+    document.getElementById('agentDetailPanel').style.display = 'block';
+    renderChatHistory();
+    refreshAgentDetail();
+  } else {
+    document.getElementById('agentDetailPanel').style.display = 'none';
+  }
+}
+
+async function refreshAgentDetail() {
+  if (!_selectedAgent) return;
+  try {
+    const url = _agentApiBase() + '/agents/' + _selectedAgent + '/detail';
+    const d = await apiFetch(url);
+    if (!d) return;
+    _agentDetailData = d;
+    applyAgentDetail(d);
+    setText('agentDetailTs', 'Updated ' + new Date().toLocaleTimeString());
+  } catch(e) {
+    setText('agentDetailTs', 'Could not load detail — is the server running?');
+  }
+}
+
+function applyAgentDetail(d) {
+  // Header metrics
+  setText('det_name',   AGENT_DISPLAY_NAMES[d.agent_name] || d.agent_name || '—');
+  setText('det_domain', 'Domain: ' + (d.domain || '—'));
+
+  const findings = d.findings || {};
+  setText('det_action', findings.action || '—');
+  const sev = findings.severity || 'info';
+  const sevEl = document.getElementById('det_severity');
+  if (sevEl) {
+    sevEl.textContent = 'Severity: ' + sev;
+    sevEl.style.color = sev === 'critical' ? 'var(--red)' : sev === 'warning' ? 'var(--yellow)' : 'var(--muted)';
+  }
+
+  const obs = d.observations || {};
+  const anomalyEl = document.getElementById('det_anomaly');
+  if (anomalyEl) {
+    const anom = obs.anomaly_detected;
+    anomalyEl.textContent = anom == null ? '—' : anom ? 'YES' : 'No';
+    anomalyEl.style.color = anom ? 'var(--red)' : 'var(--green)';
+  }
+  setText('det_ts', d.ts_s ? 'Last cycle: ' + new Date(d.ts_s * 1000).toLocaleString() : 'Last cycle: —');
+
+  // Observations table
+  const obsTbody = document.getElementById('det_obs_tbody');
+  if (obsTbody) {
+    const entries = Object.entries(obs).filter(([k]) => k !== 'anomaly_detected');
+    if (entries.length === 0) {
+      obsTbody.innerHTML = '<tr><td colspan="2" class="text-muted">No observations yet</td></tr>';
+    } else {
+      obsTbody.innerHTML = entries.map(([k, v]) => {
+        const vStr = v == null ? '—' : typeof v === 'number' ? v.toFixed(4) : String(v);
+        const highlight = k.toLowerCase().includes('stress') || k.toLowerCase().includes('cwsi') || k.toLowerCase().includes('anomaly');
+        return `<tr>
+          <td style="color:var(--muted);font-size:11px;">${k}</td>
+          <td style="font-weight:600;${highlight ? 'color:var(--cyan);' : ''}">${vStr}</td>
+        </tr>`;
+      }).join('');
+    }
+  }
+
+  // LLM summary
+  const sumEl = document.getElementById('det_summary');
+  if (sumEl) {
+    const txt = findings.summary || '';
+    sumEl.textContent = txt || '(No LLM analysis yet — waiting for first MAS cycle)';
+    sumEl.style.color = txt ? 'var(--text)' : 'var(--muted)';
+  }
+
+  // Error
+  const errEl = document.getElementById('det_error');
+  if (errEl) errEl.textContent = d.error ? 'Error: ' + d.error : '';
+
+  // Tool calls
+  const tbody = document.getElementById('det_toolcalls_tbody');
+  const countEl = document.getElementById('det_tool_count');
+  const calls = d.tool_calls || [];
+  if (countEl) countEl.textContent = calls.length ? '(' + calls.length + ' calls)' : '';
+  if (tbody) {
+    if (calls.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-muted">No tool calls in last cycle</td></tr>';
+    } else {
+      tbody.innerHTML = calls.map((c, i) => {
+        const inp = typeof c.input === 'object' ? JSON.stringify(c.input) : String(c.input || '');
+        const out = String(c.output || '').substring(0, 250);
+        return `<tr>
+          <td style="color:var(--muted);">${i + 1}</td>
+          <td style="font-weight:600;color:var(--cyan);font-size:12px;">${c.tool || '—'}</td>
+          <td style="font-size:11px;color:var(--muted);">${inp.substring(0, 120)}</td>
+          <td style="font-size:11px;color:var(--muted);">${out}</td>
+        </tr>`;
+      }).join('');
+    }
+  }
+
+  // Raw JSON
+  const rawEl = document.getElementById('rawDetailJson');
+  if (rawEl) rawEl.textContent = JSON.stringify(d, null, 2);
+}
+
+function toggleRawDetail() {
+  const el = document.getElementById('rawDetailJson');
+  const tog = document.getElementById('rawDetailToggle');
+  if (!el) return;
+  const visible = el.style.display !== 'none';
+  el.style.display = visible ? 'none' : 'block';
+  if (tog) tog.textContent = visible ? '[click to expand]' : '[click to collapse]';
+}
+
+// ----------------------------------------------------------------
+// AGENT CHAT
+// ----------------------------------------------------------------
+async function sendAgentChat() {
+  if (!_selectedAgent) { toast('Select an agent first', 'yellow'); return; }
+  const input = document.getElementById('chatInput');
+  const msg   = (input.value || '').trim();
+  if (!msg) return;
+
+  input.value = '';
+  const btn   = document.getElementById('chatSendBtn');
+  btn.disabled = true;
+
+  _agentChatHistory.push({ role: 'user', content: msg });
+  renderChatHistory(true); // true = show thinking indicator
+
+  try {
+    const resp = await fetch(_agentApiBase() + '/agents/' + _selectedAgent + '/chat', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ message: msg }),
+    });
+    if (resp.ok) {
+      const d = await resp.json();
+      _agentChatHistory.push({ role: 'agent', content: d.response || 'No response generated.' });
+    } else {
+      const err = await resp.text().catch(() => resp.status);
+      _agentChatHistory.push({ role: 'agent', content: 'Error ' + resp.status + ': ' + err });
+    }
+  } catch(e) {
+    _agentChatHistory.push({ role: 'agent', content: 'Network error: ' + e.message });
+  }
+
+  renderChatHistory(false);
+  btn.disabled = false;
+}
+
+function renderChatHistory(thinking = false) {
+  const el = document.getElementById('chatHistory');
+  if (!el) return;
+  const agentLabel = AGENT_DISPLAY_NAMES[_selectedAgent] || _selectedAgent || 'Agent';
+
+  if (_agentChatHistory.length === 0 && !thinking) {
+    el.innerHTML = '<div class="text-muted text-sm" style="text-align:center;padding:24px 0;">Ask the agent a question to start a conversation</div>';
+    return;
+  }
+
+  let html = _agentChatHistory.map(m => {
+    const isUser = m.role === 'user';
+    return `<div class="chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-agent'}">
+      <div class="chat-role ${isUser ? 'chat-role-user' : 'chat-role-agent'}">${isUser ? 'YOU' : agentLabel.toUpperCase()}</div>
+      <div>${m.content.replace(/\n/g, '<br>')}</div>
+    </div>`;
+  }).join('');
+
+  if (thinking) {
+    html += `<div class="chat-bubble chat-bubble-agent">
+      <div class="chat-role chat-role-agent">${agentLabel.toUpperCase()}</div>
+      <div class="chat-thinking">Thinking… (calling tools and reasoning)</div>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+  el.scrollTop = el.scrollHeight;
+}
+
+// Auto-refresh agent detail every 60s when inspector tab is active
+function _startAgentDetailPoller() {
+  _pollIntervals.push(setInterval(() => {
+    if (_selectedAgent && document.getElementById('tab-agents')?.classList.contains('active')) {
+      refreshAgentDetail();
+    }
+  }, 60000));
+}
+</script>
+</body>
+</html>
