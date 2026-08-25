@@ -50,6 +50,12 @@ class SoilTelemetryMessage(BaseModel):
     fault_mode:             Optional[bool]  = False
     spike_injected:         Optional[bool]  = False
 
+    # Provenance. Pydantic drops undeclared fields, so without these the
+    # distinction between a measured reading and a simulated one is lost the
+    # moment it reaches the data layer.
+    source:                 Optional[str]        = None   # "esp32_node" | None
+    measured_fields:        Optional[list[str]]  = None
+
     @field_validator("*", mode="before")
     @classmethod
     def reject_nan(cls, v):

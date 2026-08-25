@@ -35,7 +35,16 @@ def route_telemetry(data: dict):
     for field, value in fields.items():
         set_latest(field, value)
 
-    # 4. Log spike events (QA/QC: these are anomalous sensor readings)
+    # 4. Cache provenance so agents and the UIs can distinguish a measured
+    #    reading from a simulated one. SENSOR_FIELDS filtering above drops these,
+    #    and without them every layer downstream treats invented values and
+    #    hardware readings identically.
+    source = data.get("source")
+    if source:
+        set_latest("data_source", source)
+        set_latest("measured_fields", ",".join(data.get("measured_fields") or []))
+
+    # 5. Log spike events (QA/QC: these are anomalous sensor readings)
     if data.get("spike_injected"):
         log_event(
             "sensor_spike_injected",
@@ -43,7 +52,7 @@ def route_telemetry(data: dict):
             severity="warning",
         )
 
-    # 5. Update arrival heartbeat so other layers can detect silent failures
+    # 6. Update arrival heartbeat so other layers can detect silent failures
     set_latest("last_seen", time.time())
 
 

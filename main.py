@@ -114,8 +114,25 @@ def _wait_for_ditto(max_wait: int = 180) -> bool:
     return False
 
 
+# The physical layer is either the simulator (random.gauss values) or the real
+# ESP32 readings replayed from CSV. Set USE_REAL_SENSOR=1 to run the twin on
+# measured data; leave it unset and nothing about the original behaviour changes.
+_USE_REAL_SENSOR = os.getenv("USE_REAL_SENSOR", "").lower() in ("1", "true", "yes")
+_REAL_SENSOR_CSV = os.getenv("REAL_SENSOR_CSV", "data/soil_dataset.csv")
+_REAL_SENSOR_INTERVAL = os.getenv("REAL_SENSOR_INTERVAL", "2")
+
+_PHYSICAL_LAYER = (
+    ("Physical: real ESP32 readings",
+     [sys.executable, "-m", "physical.real_sensor_bridge",
+      "--csv", _REAL_SENSOR_CSV,
+      "--interval", _REAL_SENSOR_INTERVAL,
+      "--loop"])
+    if _USE_REAL_SENSOR else
+    ("Physical Simulator", [sys.executable, "-m", "physical.simulator"])
+)
+
 LAYERS = [
-    ("Physical Simulator",     [sys.executable, "-m", "physical.simulator"]),
+    _PHYSICAL_LAYER,
     ("DT Network Ingestor",    [sys.executable, "-m", "dt_network.ingestor"]),
     ("Data Mgmt Pipeline",     [sys.executable, "-m", "data_mgmt.pipeline"]),
     ("Simulation Runner",      [sys.executable, "-m", "simulation.model_runner"]),
