@@ -1114,6 +1114,196 @@ async def scientist_chat(req: ChatRequest, user=Depends(get_current_user)):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# PHYSICAL LAYER ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+_PHYSICAL_FIELDS = {"soil_moisture_pct", "bulk_density_g_cm3", "soil_temp_c"}
+
+
+class PhysicalOverrideRequest(BaseModel):
+    field: str
+    value: float
+    reason: str = ""
+
+class PhysicalFastDiagnoseRequest(BaseModel):
+    parcel_id: Optional[str] = None
+
+
+@router.get("/physical/status")
+async def physical_status(user=Depends(get_current_user)):
+    """
+    Current physical parameter status: VWC, bulk density, temperature,
+    active depletion states (S4/S5), cross-domain plant demand summary.
+    Accessible to any authenticated user.
+    """
+    from service_layer.cross_domain_sync import get_latest_physical_cross_domain
+
+    phys = get_latest_physical_cross_domain()
+
+    depletion_raw = get_latest_cached("active_depletion_states")
+    try:
+        all_states = json.loads(depletion_raw) if isinstance(depletion_raw, str) and depletion_raw else []
+    except (json.JSONDecodeError, TypeError):
+        all_states = []
+    physical_states = [s for s in all_states if s in ("S4", "S5")]
+
+    depletion_detail_raw = get_latest_cached("depletion_detail")
+    try:
+        depletion_detail = json.loads(depletion_detail_raw) if isinstance(depletion_detail_raw, str) and depletion_detail_raw else {}
+    except (json.JSONDecodeError, TypeError):
+        depletion_detail = {}
+
+    s4_info = depletion_detail.get("S4")
+    s5_info = depletion_detail.get("S5")
+
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "physical": phys,
+        "physical_depletion_states": physical_states,
+        "s4_compaction": s4_info,
+        "s5_water_stress": s5_info,
+        "system_state": get_state(),
+    }
+
+
+@router.get("/physical/water_balance")
+async def physical_water_balance(
+    horizon_days: int = Query(7, ge=1, le=14),
+    user=Depends(require_role("scientist")),
+):
+    """
+    7-day (or custom horizon) FAO-56 water balance forecast.
+    Returns daily VWC%, available water (mm), ET₀, and stress flag.
+    """
+    from simulation.model_runner import get_water_balance_forecast
+
+    try:
+        forecast = get_water_balance_forecast(horizon_days=horizon_days)
+        return {
+            "horizon_days": horizon_days,
+            "soil_type": ACTIVE_SOIL_TYPE,
+            "forecast": forecast,
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Water balance model error: {e}")
+
+
+@router.get("/physical/compaction_risk")
+async def physical_compaction_risk(
+    machinery_passes: int = Query(0, ge=0, le=20),
+    user=Depends(require_role("scientist")),
+):
+    """
+    Compaction risk assessment: 0–100 risk score, risk level, recommended action.
+    Optionally accounts for recent machinery passes.
+    """
+    from simulation.model_runner import get_compaction_risk
+
+    try:
+        result = get_compaction_risk(machinery_passes=machinery_passes)
+        return result
+    except Exception as e:
+        raise HTTPException(500, f"Compaction model error: {e}")
+
+
+@router.get("/physical/erosion_risk")
+async def physical_erosion_risk(
+    slope_pct: float = Query(2.0, ge=0.0, le=100.0),
+    slope_length_m: float = Query(50.0, ge=1.0, le=500.0),
+    cover_factor: float = Query(0.3, ge=0.0, le=1.0),
+    support_practice: float = Query(1.0, ge=0.1, le=1.0),
+    user=Depends(require_role("scientist")),
+):
+    """
+    RUSLE-based erosion risk estimate (t/ha/yr).
+    Returns soil_loss_t_ha_yr, risk_class, dominant factor, and RUSLE factors.
+    """
+    from simulation.model_runner import get_erosion_risk
+
+    try:
+        result = get_erosion_risk(
+            slope_pct=slope_pct,
+            slope_length_m=slope_length_m,
+            cover_factor=cover_factor,
+            support_practice=support_practice,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(500, f"Erosion model error: {e}")
+
+
+@router.post("/physical/override")
+async def physical_override(
+    req: PhysicalOverrideRequest,
+    user=Depends(require_role("scientist")),
+):
+    """
+    Override a physical sensor field (soil_moisture_pct, bulk_density_g_cm3,
+    or soil_temp_c). Writes to InfluxDB and updates Redis cache.
+    """
+    if req.field not in _PHYSICAL_FIELDS:
+        raise HTTPException(
+            400,
+            f"Field '{req.field}' is not a physical field. "
+            f"Valid fields: {sorted(_PHYSICAL_FIELDS)}",
+        )
+
+    old_value = get_latest(req.field)
+    write_point("soil_telemetry", {req.field: req.value}, tags={"source": "physical_override"})
+    set_latest(req.field, req.value)
+
+    log_audit(user["user_id"], "physical_override", {
+        "field": req.field, "old_value": old_value,
+        "new_value": req.value, "reason": req.reason,
+    })
+    log_event("physical_override", {
+        "field": req.field, "old_value": old_value, "new_value": req.value,
+        "user_id": user["user_id"], "reason": req.reason,
+    }, severity="warning")
+
+    return {
+        "status": "ok",
+        "field": req.field,
+        "old_value": old_value,
+        "new_value": req.value,
+    }
+
+
+@router.post("/physical/fast_diagnose")
+async def physical_fast_diagnose(
+    req: PhysicalFastDiagnoseRequest,
+    user=Depends(require_role("scientist")),
+):
+    """
+    Run the physical fast path from the intelligence agent.
+    Returns a high-confidence recommendation if only S4/S5 states are active.
+    Returns null result if non-physical states are present (full pipeline needed).
+    """
+    from intelligent.soil_intelligence_agent import SoilIntelligenceAgent
+
+    profile = get_user(user["user_id"])
+    parcel_id = req.parcel_id or (profile.get("parcels", [None]) or [None])[0]
+    soil_type = get_parcel_soil_type(user["user_id"], parcel_id) if parcel_id else None
+
+    agent = SoilIntelligenceAgent(soil_type=soil_type)
+    try:
+        result = agent.run_physical_fast_path()
+        log_audit(user["user_id"], "physical_fast_diagnose", {
+            "parcel_id": parcel_id,
+            "fast_path_taken": result is not None,
+            "action": (result or {}).get("action"),
+        })
+        return {
+            "fast_path_taken": result is not None,
+            "result": result,
+            "parcel_id": parcel_id,
+            "soil_type": soil_type,
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Physical fast diagnose error: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # SHARED
 # ═══════════════════════════════════════════════════════════════════════════
 

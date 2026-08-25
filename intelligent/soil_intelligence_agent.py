@@ -618,6 +618,209 @@ class SoilIntelligenceAgent:
         return "\n".join(lines)
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Physical fast path (S4-only, S5-only, or S4+S5 conflict resolution)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def run_physical_fast_path(self) -> dict | None:
+        """
+        High-confidence fast path for purely physical depletion states.
+        Executes without the full 6-step pipeline (no LLM, no KG lookup).
+        Returns a result dict if conditions are met, None otherwise.
+
+        Conditions for fast path:
+          - Only physical states active (S4 and/or S5), no chemical/biological.
+          - Confidence > AUTONOMOUS_THRESHOLD (0.85).
+        """
+        soil_data  = self.retrieve_soil_data()
+        if not soil_data:
+            return None
+
+        depletion = self.detect_depletion_states(soil_data)
+        if not depletion:
+            return None
+
+        physical  = {k: v for k, v in depletion.items()
+                     if v.get("category") == "physical"}
+        non_phys  = {k: v for k, v in depletion.items()
+                     if k != "S8" and v.get("category") != "physical"}
+
+        if non_phys:
+            return None  # mixed states — use full pipeline
+
+        if not physical:
+            return None
+
+        # Route to the appropriate fast-path handler
+        active = set(physical.keys())
+        if active == {"S4"}:
+            rec = self._fast_path_s4(soil_data, depletion["S4"])
+        elif active == {"S5"}:
+            rec = self._fast_path_s5(soil_data, depletion["S5"])
+        elif active == {"S4", "S5"}:
+            rec = self._physical_conflict_s4_s5(soil_data, depletion)
+        else:
+            return None
+
+        if rec.get("confidence", 0) < AUTONOMOUS_THRESHOLD:
+            return None  # not confident enough — fall back to full pipeline
+
+        diagnosis_id = save_diagnosis({
+            "primary_state":     rec["state"],
+            "all_states":        list(active),
+            "confidence":        rec["confidence"],
+            "soil_type":         self.soil_type,
+            "soil_data":         {k: round(v, 2) for k, v in soil_data.items()},
+            "layer_responsible": "autonomous",
+        })
+        rec["diagnosis_id"] = diagnosis_id
+        save_recommendation({**rec, "delivered_via": "fast_path"})
+        set_active_diagnosis({
+            "primary_state": rec["state"],
+            "confidence":    rec["confidence"],
+            "active_states": list(active),
+        })
+
+        return {
+            "fast_path":        True,
+            "soil_type":        self.soil_type,
+            "active_states":    list(active),
+            "recommendation":   rec,
+            "soil_data":        {k: round(v, 2) for k, v in soil_data.items()},
+        }
+
+    def _fast_path_s4(self, soil_data: dict, s4_info: dict) -> dict:
+        """Deep-rip recommendation for S4 compaction only."""
+        bd       = s4_info.get("value", soil_data.get("bulk_density_g_cm3", 0))
+        bd_warn  = s4_info.get("threshold", 1.6)
+        severity = min(1.0, max(0.0, (bd - bd_warn) / 0.2))
+        depth_cm = 30 + int(severity * 20)          # 30–50 cm based on severity
+        confidence = min(0.95, 0.85 + severity * 0.10)
+
+        return {
+            "state": "S4", "type": "mechanical", "layer": "autonomous",
+            "product": f"Deep ripping to {depth_cm} cm",
+            "rate_kg_ha": 0,
+            "timing": self._get_timing("After harvest, before next season", "post_harvest"),
+            "method": f"Rip to {depth_cm} cm depth, then adopt reduced tillage",
+            "rationale": (
+                f"Bulk density {bd:.2f} g/cm³ on {self.soil_type} soil "
+                f"(threshold: {bd_warn:.2f}) — {severity:.0%} above warning. "
+                f"Root growth and water infiltration restricted."
+            ),
+            "confidence": round(confidence, 2),
+        }
+
+    def _fast_path_s5(self, soil_data: dict, s5_info: dict) -> dict:
+        """Irrigation or drainage recommendation for S5 only."""
+        stress    = s5_info.get("stress_type", "dry")
+        mst       = s5_info.get("value", soil_data.get("soil_moisture_pct", 0))
+        threshold = s5_info.get("threshold", 15.0)
+
+        # Check cross-domain plant demand for irrigation volume
+        plant_demand_mm = 0.0
+        try:
+            import json as _j
+            raw = get_latest_cached("cross_domain_plant_demand")
+            if raw:
+                pd_data = _j.loads(raw) if isinstance(raw, str) else raw
+                plant_demand_mm = float(pd_data.get("plant_water_demand_mm_day") or 0)
+        except Exception:
+            pass
+
+        confidence = min(0.95, 0.85 + min(0.10, abs(mst - threshold) / threshold))
+
+        if stress == "dry":
+            from shared.config import HEALTHY_RANGES_BY_SOIL_TYPE
+            fc_mid = HEALTHY_RANGES_BY_SOIL_TYPE.get(self.soil_type, {}).get(
+                "soil_moisture_pct", {}).get("min", 20.0)
+            deficit_pct = max(0, fc_mid - mst)
+            # Convert VWC deficit % to mm for 30cm depth
+            irrig_mm = round(deficit_pct * 0.3 * 10 + max(0, plant_demand_mm * 3), 0)
+            return {
+                "state": "S5", "type": "irrigation", "layer": "autonomous",
+                "product": "Irrigation water",
+                "rate_kg_ha": 0,
+                "timing": self._get_timing("Irrigate within 24 hours", "immediate"),
+                "method": f"Apply {irrig_mm:.0f} mm to restore field capacity",
+                "rationale": (
+                    f"Soil moisture {mst:.1f}% below warning threshold {threshold:.1f}% "
+                    f"on {self.soil_type} soil. Deficit ≈ {deficit_pct:.1f}% VWC "
+                    f"→ {irrig_mm:.0f} mm required."
+                    + (f" Plant demand: {plant_demand_mm:.1f} mm/day." if plant_demand_mm else "")
+                ),
+                "confidence": round(confidence, 2),
+            }
+
+        return {
+            "state": "S5", "type": "drainage", "layer": "autonomous",
+            "product": "Subsurface drainage",
+            "rate_kg_ha": 0,
+            "timing": self._get_timing("Install drainage before wet season", "pre_planting"),
+            "method": "Tile drains or raised beds; delay irrigation immediately",
+            "rationale": (
+                f"Soil moisture {mst:.1f}% above {threshold:.1f}% "
+                f"— waterlogged on {self.soil_type} soil."
+            ),
+            "confidence": round(confidence, 2),
+        }
+
+    def _physical_conflict_s4_s5(self, soil_data: dict, depletion: dict) -> dict:
+        """
+        S4 + S5 conflict resolution.
+        Priority: irrigation first (immediate plant need), deep rip post-harvest.
+        This is because compaction cannot be remedied during the growing season
+        without risking further damage to wet soils.
+        """
+        s4 = depletion.get("S4", {})
+        s5 = depletion.get("S5", {})
+        bd  = s4.get("value", 1.65)
+        mst = s5.get("value", 12.0)
+        stress = s5.get("stress_type", "dry")
+
+        if stress == "dry":
+            from shared.config import HEALTHY_RANGES_BY_SOIL_TYPE
+            fc_mid = HEALTHY_RANGES_BY_SOIL_TYPE.get(self.soil_type, {}).get(
+                "soil_moisture_pct", {}).get("min", 20.0)
+            irrig_mm = round(max(0, fc_mid - mst) * 0.3 * 10, 0)
+            plan = (
+                f"Step 1 (immediate): Irrigate {irrig_mm:.0f} mm — plant water stress is urgent. "
+                f"Step 2 (post-harvest): Deep rip to 40 cm to address compaction "
+                f"(BD {bd:.2f} g/cm³). Note: do NOT rip while soil is wet — "
+                f"risk of smearing. Wait until moisture is at field capacity."
+            )
+            return {
+                "state": "S4+S5", "type": "physical_conflict", "layer": "autonomous",
+                "product": "Irrigation now + Deep ripping post-harvest",
+                "rate_kg_ha": 0,
+                "timing": "Immediate irrigation; deep ripping after harvest",
+                "method": plan,
+                "rationale": (
+                    f"Both S4 (BD {bd:.2f} g/cm³) and S5-dry ({mst:.1f}% moisture) active. "
+                    f"Irrigation is prioritised — plants cannot wait. "
+                    f"Ripping wet compacted soil causes smearing; schedule post-harvest."
+                ),
+                "confidence": 0.91,
+            }
+
+        # S4 + S5-wet: improve drainage first, then rip when dry
+        return {
+            "state": "S4+S5", "type": "physical_conflict", "layer": "autonomous",
+            "product": "Drainage + deferred deep ripping",
+            "rate_kg_ha": 0,
+            "timing": "Drainage immediately; ripping when soil reaches field capacity",
+            "method": (
+                f"Step 1: Improve drainage (raised beds or tile drains) to reduce waterlogging. "
+                f"Step 2: Once moisture normalises, deep rip to 40 cm. "
+                f"Ripping waterlogged soil worsens structural damage."
+            ),
+            "rationale": (
+                f"S4 (BD {bd:.2f} g/cm³) + S5-wet ({mst:.1f}% moisture) on {self.soil_type} soil. "
+                f"Drainage first; compaction remediation deferred."
+            ),
+            "confidence": 0.90,
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Full pipeline
     # ─────────────────────────────────────────────────────────────────────────
 

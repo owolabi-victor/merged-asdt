@@ -466,6 +466,11 @@ def render_dashboard():
     else:
         st.success("No alerts — your soil looks good!")
 
+    # ── Physical status cards ────────────────────────────────────────────────
+    phys = api_get("/physical/status")
+    if phys:
+        _render_physical_cards(phys, parcel_id)
+
     # Missing fields callout
     if data.get("fields_missing"):
         with st.expander(f"📋 {len(data['fields_missing'])} measurements still needed"):
@@ -1044,6 +1049,147 @@ def render_soil_data():
                 st.error(result.get("error", "Failed to save"))
 
 
+# ── Physical Status Cards ────────────────────────────────────────────────────
+
+def _render_physical_cards(phys: dict, parcel_id: str):
+    """
+    Render farmer-friendly physical status cards for moisture, compaction,
+    and erosion. Shows action buttons when S4 or S5 depletion states are active.
+    """
+    phys_states = phys.get("physical_depletion_states", [])
+    phys_data   = phys.get("physical", {})
+    if not phys_data:
+        return
+
+    vwc  = phys_data.get("VWC_percent")
+    bd   = phys_data.get("bulk_density_g_cm3")
+    temp = phys_data.get("soil_temperature_c")
+    avail_water = phys_data.get("available_water_mm")
+    s4_active = "S4" in phys_states
+    s5_active = "S5" in phys_states
+
+    if not (vwc or bd or temp):
+        return
+
+    st.divider()
+    st.markdown("### 🌱 Physical Soil Status")
+
+    col_m, col_c, col_e = st.columns(3)
+
+    # Moisture card
+    with col_m:
+        s5_info = phys.get("s5_water_stress") or {}
+        urgency = s5_info.get("urgency", "normal")
+        if s5_active:
+            triggers = s5_info.get("triggers", [])
+            stress_type = triggers[0].get("stress_type", "dry") if triggers else "dry"
+            if stress_type == "dry":
+                card_cls = "alert-critical" if urgency == "high" else "alert-warning"
+                icon = "🔴" if urgency == "high" else "🟡"
+                status_txt = "Too Dry"
+            else:
+                card_cls = "alert-warning"
+                icon = "🌊"
+                status_txt = "Waterlogged"
+        else:
+            card_cls = ""
+            icon = "💧"
+            status_txt = "Good"
+
+        vwc_str = f"{vwc:.1f}%" if vwc is not None else "—"
+        avail_str = f"{avail_water:.0f} mm available" if avail_water is not None else ""
+        st.markdown(
+            f'<div class="alert-card {card_cls}" style="min-height:90px">'
+            f'<strong>{icon} Moisture: {status_txt}</strong><br>'
+            f'{vwc_str}{(" · " + avail_str) if avail_str else ""}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        if urgency == "high":
+            st.caption("High plant water demand — urgent")
+
+    # Compaction card
+    with col_c:
+        if s4_active:
+            bd_str = f"{bd:.2f} g/cm³" if bd is not None else "—"
+            st.markdown(
+                f'<div class="alert-card alert-warning" style="min-height:90px">'
+                f'<strong>⚖️ Compaction: High</strong><br>'
+                f'{bd_str} — deep rip needed</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            bd_str = f"{bd:.2f} g/cm³" if bd is not None else "—"
+            st.markdown(
+                f'<div class="alert-card" style="min-height:90px">'
+                f'<strong>✅ Compaction: Normal</strong><br>'
+                f'{bd_str}</div>',
+                unsafe_allow_html=True,
+            )
+
+    # Temperature card
+    with col_e:
+        temp_str = f"{temp:.1f} °C" if temp is not None else "—"
+        too_hot  = temp is not None and temp > 35
+        too_cold = temp is not None and temp < 10
+        if too_hot or too_cold:
+            st.markdown(
+                f'<div class="alert-card alert-warning" style="min-height:90px">'
+                f'<strong>🌡️ Temperature: Stress</strong><br>'
+                f'{temp_str} — {"too hot" if too_hot else "too cold"} for roots</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div class="alert-card" style="min-height:90px">'
+                f'<strong>✅ Temperature: Good</strong><br>'
+                f'{temp_str}</div>',
+                unsafe_allow_html=True,
+            )
+
+    # ── Action buttons when physical depletion is active ────────────────────
+    if s4_active or s5_active:
+        st.markdown("**What would you like to do?**")
+        col_i, col_r, col_a = st.columns(3)
+
+        with col_i:
+            if st.button("💧 I will irrigate", use_container_width=True,
+                          key="phys_action_irrigate", disabled=not s5_active):
+                api_post("/ui/farmer/observation", {
+                    "text": "Farmer committed to irrigation in response to S5 water stress.",
+                    "structured_fields": {"action": "irrigate", "depletion_state": "S5"},
+                })
+                st.success("Logged. Irrigate soon — check back tomorrow.")
+
+        with col_r:
+            if st.button("⛏️ I will deep rip", use_container_width=True,
+                          key="phys_action_deeprip", disabled=not s4_active):
+                api_post("/ui/farmer/observation", {
+                    "text": "Farmer committed to deep ripping in response to S4 compaction.",
+                    "structured_fields": {"action": "deep_rip", "depletion_state": "S4"},
+                })
+                st.success("Logged. Rip to 30–50 cm when soil is dry enough.")
+
+        with col_a:
+            if st.button("💬 I need advice", use_container_width=True,
+                          key="phys_action_advice"):
+                codes = " and ".join(sorted(phys_states))
+                question = (
+                    f"My soil has active depletion: {codes}. "
+                    f"Moisture is {vwc:.1f}%, bulk density is {bd:.2f} g/cm³. "
+                    f"What should I do first?"
+                )
+                st.session_state.chat_history.append({"role": "user", "content": question})
+                result = api_post("/ui/farmer/chat", {
+                    "question": question,
+                    "parcel_id": parcel_id,
+                    "history": [],
+                })
+                answer = (result or {}).get("answer", "Unable to get advice right now.")
+                st.session_state.chat_history.append({"role": "assistant", "content": answer})
+                st.info(f"**Advisor:** {answer}")
+
+
 # ── Chat Tab ────────────────────────────────────────────────────────────────
 
 def render_chat():
@@ -1071,7 +1217,7 @@ def render_chat():
         process_chat_message(user_input)
         st.rerun()
 
-    # Quick question buttons (FIX: actually trigger the chat)
+    # Quick question buttons — general + physical
     st.divider()
     st.caption("Quick questions:")
     quick_qs = [
@@ -1084,6 +1230,21 @@ def render_chat():
     for i, q in enumerate(quick_qs):
         with cols[i % 2]:
             if st.button(q, key=f"quick_{i}", use_container_width=True):
+                st.session_state.pending_question = q
+                st.rerun()
+
+    # Physical quick questions
+    st.caption("Physical soil questions:")
+    phys_qs = [
+        "Is my soil moisture level safe for my crops?",
+        "My soil feels hard — what should I do about compaction?",
+        "How much should I irrigate today?",
+        "When is the best time to deep rip compacted soil?",
+    ]
+    cols2 = st.columns(2)
+    for i, q in enumerate(phys_qs):
+        with cols2[i % 2]:
+            if st.button(q, key=f"phys_quick_{i}", use_container_width=True):
                 st.session_state.pending_question = q
                 st.rerun()
 

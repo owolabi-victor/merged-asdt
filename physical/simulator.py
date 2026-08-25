@@ -111,6 +111,14 @@ FAULT_OVERRIDES = {
     "soil_moisture_pct":              28.0,    # adequate (not water stressed)
 }
 
+# ── Physical-only fault profile (S4 + S5) ────────────────────────────────────
+# Chemical and biological parameters stay healthy.
+# Use fault_mode_physical=True to activate.
+PHYSICAL_FAULT_OVERRIDES = {
+    "bulk_density_g_cm3": 1.72,   # severely compacted → S4 critical
+    "soil_moisture_pct":  11.5,   # dry water stress → S5 dry
+}
+
 
 class SoilParcelSimulator:
     """
@@ -124,13 +132,15 @@ class SoilParcelSimulator:
 
     def __init__(self, soil_type: str = "loamy",
                  fault_mode: bool = True,
+                 fault_mode_physical: bool = False,
                  fault_probability: float = 0.0):
-        self.soil_type       = soil_type
-        self.fault_mode      = fault_mode
-        self.fault_prob      = fault_probability
-        self._drift          = {f: 0.0 for f in SENSOR_FIELDS}
-        self._nominal        = NOMINAL_BY_TYPE.get(soil_type, NOMINAL_BY_TYPE["loamy"])
-        self._texture        = SOIL_TYPES.get(soil_type, SOIL_TYPES["loamy"])
+        self.soil_type           = soil_type
+        self.fault_mode          = fault_mode
+        self.fault_mode_physical = fault_mode_physical
+        self.fault_prob          = fault_probability
+        self._drift              = {f: 0.0 for f in SENSOR_FIELDS}
+        self._nominal            = NOMINAL_BY_TYPE.get(soil_type, NOMINAL_BY_TYPE["loamy"])
+        self._texture            = SOIL_TYPES.get(soil_type, SOIL_TYPES["loamy"])
 
     def _apply_drift(self):
         """Slow random walk on each field — simulates gradual soil change."""
@@ -157,6 +167,8 @@ class SoilParcelSimulator:
         for f in SENSOR_FIELDS:
             if self.fault_mode and f in FAULT_OVERRIDES:
                 base = FAULT_OVERRIDES[f]
+            elif self.fault_mode_physical and f in PHYSICAL_FAULT_OVERRIDES:
+                base = PHYSICAL_FAULT_OVERRIDES[f]
             else:
                 base = self._nominal.get(f, 0.0)
 
@@ -189,10 +201,16 @@ class SoilParcelSimulator:
 
 
 def main():
-    soil_type = ACTIVE_SOIL_TYPE
-    sim   = SoilParcelSimulator(
+    import os
+    soil_type            = ACTIVE_SOIL_TYPE
+    fault_mode_physical  = os.getenv("FAULT_MODE_PHYSICAL", "").lower() in ("1", "true", "yes")
+    # physical-only mode takes precedence over full multi-factor mode
+    fault_mode_full      = not fault_mode_physical
+
+    sim = SoilParcelSimulator(
         soil_type=soil_type,
-        fault_mode=True,
+        fault_mode=fault_mode_full,
+        fault_mode_physical=fault_mode_physical,
         fault_probability=0.05,
     )
     mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, f"simulator_{ASSET_ID}")
@@ -201,8 +219,13 @@ def main():
 
     print(f"[SIMULATOR] Publishing soil readings to {TOPIC_TELEMETRY}")
     print(f"[SIMULATOR] Soil type: {soil_type}")
-    print(f"[SIMULATOR] fault_mode=True → multi-factor depletion scenario active")
-    print(f"[SIMULATOR]   N depleted, pH acidified, compacted, OM depleted, biologically inactive")
+    if fault_mode_physical:
+        print(f"[SIMULATOR] fault_mode_physical=True → S4 (compacted) + S5 (dry) only")
+        print(f"[SIMULATOR]   BD={PHYSICAL_FAULT_OVERRIDES['bulk_density_g_cm3']} g/cm³, "
+              f"moisture={PHYSICAL_FAULT_OVERRIDES['soil_moisture_pct']}%  (chemical/bio healthy)")
+    else:
+        print(f"[SIMULATOR] fault_mode=True → multi-factor depletion scenario active")
+        print(f"[SIMULATOR]   N depleted, pH acidified, compacted, OM depleted, biologically inactive")
 
     while True:
         set_latest("layer_heartbeat_physical.simulator",
@@ -210,13 +233,17 @@ def main():
         payload = sim.next_reading()
         mqttc.publish(TOPIC_TELEMETRY, json.dumps(payload), qos=1)
 
-        n   = payload.get("nitrogen_ppm", "?")
-        ph  = payload.get("soil_ph", "?")
-        om  = payload.get("organic_matter_pct", "?")
-        mb  = payload.get("microbial_biomass_mg_c_kg", "?")
         bd  = payload.get("bulk_density_g_cm3", "?")
+        mst = payload.get("soil_moisture_pct", "?")
         tag = " [SPIKE]" if payload.get("spike_injected") else ""
-        print(f"  N={n} ppm | pH={ph} | OM={om}% | MB={mb} mgC/kg | BD={bd} g/cm³{tag}")
+        if fault_mode_physical:
+            print(f"  BD={bd} g/cm³ | moisture={mst}%{tag}")
+        else:
+            n   = payload.get("nitrogen_ppm", "?")
+            ph  = payload.get("soil_ph", "?")
+            om  = payload.get("organic_matter_pct", "?")
+            mb  = payload.get("microbial_biomass_mg_c_kg", "?")
+            print(f"  N={n} ppm | pH={ph} | OM={om}% | MB={mb} mgC/kg | BD={bd} g/cm³ | mst={mst}%{tag}")
 
         time.sleep(30)
 

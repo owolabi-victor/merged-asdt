@@ -135,6 +135,9 @@ class CrossDomainSynchronizer:
             "soil_state":     soil_state,
             "payload":        payload,
             "depletion_states": depletion_states,
+            # Physical fields explicitly tagged so Plant DT knows which to use
+            # for root-zone water (VWC), root resistance (BD), and thermal calcs
+            "physical_fields": ["VWC_percent", "bulk_density_g_cm3", "soil_temperature_c"],
             "confidence":     0.95,
         }
 
@@ -281,24 +284,37 @@ class CrossDomainSynchronizer:
         React to plant-driven triggers:
         1. If plant water demand > available soil water → irrigation alert
         2. If crop at reproductive stage AND N low → prioritise N application
+
+        Uses rooting_depth_cm from Plant DT (falls back to 30 cm) to compute
+        the root-zone available water column rather than a fixed 30 cm depth.
         """
-        demand = self._plant_demand.get("plant_water_demand_mm_day")
+        demand    = self._plant_demand.get("plant_water_demand_mm_day")
         phenology = self._plant_demand.get("crop_phenology_stage", "")
+
+        # Use rooting depth from Plant DT when available, default 30 cm
+        rooting_depth_cm = self._plant_demand.get("rooting_depth_cm")
+        try:
+            depth_m = float(rooting_depth_cm) / 100.0 if rooting_depth_cm else 0.30
+        except (TypeError, ValueError):
+            depth_m = 0.30
+        depth_m = max(0.10, min(depth_m, 1.50))  # clamp 10 cm – 150 cm
 
         # Trigger 1: Plant water demand exceeds available soil water
         if demand is not None:
             moisture = get_latest("soil_moisture_pct")
             if moisture is not None and demand > 0:
-                # Rough estimate: available water in mm for 30cm depth
-                available_mm = moisture * 0.3 * 10  # VWC% × depth_m × 1000mm/m
+                # Available water in mm = VWC% × depth_m × 1000 mm/m
+                available_mm = moisture * depth_m * 10
                 if demand > available_mm / 3:  # demand exceeds 1/3 of available
                     log_event("cross_domain_irrigation_trigger", {
                         "plant_demand_mm_day": demand,
                         "available_water_mm":  round(available_mm, 1),
+                        "rooting_depth_cm":    round(depth_m * 100, 1),
                         "action": "Adjust irrigation recommendation based on plant demand",
                     }, severity="warning")
                     print(f"[CROSS-DOMAIN] ⚠️  Plant demand ({demand} mm/day) approaching "
-                          f"available soil water ({available_mm:.0f} mm). Irrigation may be needed.")
+                          f"available soil water ({available_mm:.0f} mm, depth={depth_m*100:.0f} cm). "
+                          f"Irrigation may be needed.")
 
         # Trigger 2: High nutrient demand during reproductive stage
         if phenology and phenology.upper().startswith("R"):
@@ -341,6 +357,44 @@ class CrossDomainSynchronizer:
             except Exception as e:
                 print(f"[CROSS-DOMAIN] Error: {e}")
             time.sleep(60)
+
+
+def get_latest_physical_cross_domain() -> dict:
+    """
+    Return the latest physical soil state as a cross-domain-ready dict.
+
+    Pulls VWC, bulk density, and soil temperature from InfluxDB and the
+    current Plant DT demand (rooting depth, water demand) from Redis.
+    Intended for use by api_extensions.py and intelligent layer fast-path.
+    """
+    vwc  = get_latest("soil_moisture_pct")
+    bd   = get_latest("bulk_density_g_cm3")
+    temp = get_latest("soil_temp_c")
+
+    plant_raw = get_latest_cached("cross_domain_plant_demand")
+    try:
+        plant = json.loads(plant_raw) if isinstance(plant_raw, str) and plant_raw else {}
+    except (json.JSONDecodeError, TypeError):
+        plant = {}
+
+    rooting_depth_cm = plant.get("rooting_depth_cm")
+    try:
+        depth_m = float(rooting_depth_cm) / 100.0 if rooting_depth_cm else 0.30
+    except (TypeError, ValueError):
+        depth_m = 0.30
+    depth_m = max(0.10, min(depth_m, 1.50))
+
+    available_water_mm = round(vwc * depth_m * 10, 1) if vwc is not None else None
+
+    return {
+        "VWC_percent":              round(vwc, 2)  if vwc  is not None else None,
+        "bulk_density_g_cm3":       round(bd, 3)   if bd   is not None else None,
+        "soil_temperature_c":       round(temp, 2) if temp is not None else None,
+        "rooting_depth_cm":         round(depth_m * 100, 1),
+        "available_water_mm":       available_water_mm,
+        "plant_water_demand_mm_day":plant.get("plant_water_demand_mm_day"),
+        "crop_phenology_stage":     plant.get("crop_phenology_stage"),
+    }
 
 
 if __name__ == "__main__":

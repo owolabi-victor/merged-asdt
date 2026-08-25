@@ -491,71 +491,270 @@ def render_integrated_view():
 # ── Physical Segment ────────────────────────────────────────────────────────
 
 def render_physical():
+    import pandas as pd
     st.markdown('<h2 class="section-physical">Physical Segment</h2>', unsafe_allow_html=True)
-    st.caption("Soil Moisture, Bulk Density, Temperature, Texture")
+    st.caption("Soil Moisture · Bulk Density · Temperature — S4/S5 depletion states")
 
-    summary = api_get("/ui/scientist/summary")
+    summary  = api_get("/ui/scientist/summary")
+    phys_api = api_get("/physical/status")
     if not summary:
         return
 
     sensors = summary.get("sensors", {})
     physical_fields = ["soil_moisture_pct", "bulk_density_g_cm3", "soil_temp_c"]
+    field_labels = {
+        "soil_moisture_pct":  ("Soil Moisture",   "%"),
+        "bulk_density_g_cm3": ("Bulk Density",    "g/cm³"),
+        "soil_temp_c":        ("Soil Temperature","°C"),
+    }
 
-    # Current values
+    # ── Live gauges ──────────────────────────────────────────────────────────
+    st.subheader("Current Readings")
     cols = st.columns(3)
     for i, field in enumerate(physical_fields):
         with cols[i]:
-            info = sensors.get(field, {})
-            val = info.get("value")
-            unit = info.get("unit", "")
+            info  = sensors.get(field, {})
+            val   = info.get("value")
+            unit  = field_labels[field][1]
+            label = field_labels[field][0]
             status = info.get("status", "no_data")
+            age    = info.get("age_minutes")
+            age_str = f"{age:.0f} min ago" if age is not None else ""
             st.metric(
-                field.replace("_", " ").title(),
+                label,
                 f"{val:.2f} {unit}" if val is not None else "—",
+                delta=age_str if age_str else None,
+                delta_color="off",
             )
             st.markdown(status_badge(status), unsafe_allow_html=True)
+            warn = info.get("threshold_warn")
+            crit = info.get("threshold_crit")
+            if warn is not None and crit is not None:
+                st.caption(f"warn < {warn} · crit < {crit} {unit}")
 
+    # ── S4 / S5 depletion state alerts ──────────────────────────────────────
+    if phys_api:
+        phys_states = phys_api.get("physical_depletion_states", [])
+        if phys_states:
+            st.divider()
+            label_map = {"S4": "Compacted", "S5": "Water-Stressed"}
+            for code in phys_states:
+                detail = phys_api.get(f"s{code[1].lower()}_compaction" if code == "S4"
+                                      else "s5_water_stress") or {}
+                st.warning(f"**{code} — {label_map.get(code, code)}** active")
+                if detail.get("triggers"):
+                    for t in detail["triggers"]:
+                        st.write(f"  → {t.get('field', '')}: {t.get('value', ''):.2f} "
+                                 f"(threshold {t.get('threshold', ''):.2f})")
+                if detail.get("urgency") == "high":
+                    st.error("Cross-domain: plant water demand is HIGH — irrigation urgency elevated")
+
+            # Run physical fast path
+            if st.button("⚡ Run Physical Fast Diagnose", key="phys_fast_diagnose"):
+                result = api_post("/physical/fast_diagnose", {})
+                if result:
+                    if result.get("fast_path_taken"):
+                        r = result["result"]
+                        st.success(f"**{r.get('action', 'Recommendation')}**")
+                        st.write(r.get("recommendation", ""))
+                        st.write(f"Confidence: {r.get('confidence', 0):.0%} | Severity: {r.get('severity', '—')}")
+                    else:
+                        st.info("Non-physical states detected — full pipeline needed.")
+        else:
+            st.success("No physical depletion states active.")
+
+    # ── Time-series selector ─────────────────────────────────────────────────
     st.divider()
-
-    # Depletion states for this segment
-    depletion = summary.get("depletion_states", {})
-    phys_states = {k: v for k, v in depletion.items() if k in ("S4", "S5")}
-    if phys_states:
-        st.warning(f"Active Physical Depletion: {', '.join(phys_states.keys())}")
-        for code, info in phys_states.items():
-            st.write(f"**{code} — {info.get('name', '')}**")
-
-    # Time series
     st.subheader("Time Series")
-    minutes = st.slider("Time range (minutes)", 10, 360, 60, key="phys_minutes")
+    time_opt = st.radio(
+        "Range",
+        ["1 hour", "6 hours", "24 hours", "7 days"],
+        horizontal=True,
+        key="phys_time_range",
+    )
+    minutes_map = {"1 hour": 60, "6 hours": 360, "24 hours": 1440, "7 days": 10080}
+    minutes = minutes_map[time_opt]
     for field in physical_fields:
         time_series_chart(field, minutes)
 
-    # Override controls
+    # ── Water balance forecast chart ─────────────────────────────────────────
+    st.divider()
+    st.subheader("Water Balance Forecast (FAO-56)")
+    col_wb1, col_wb2 = st.columns([3, 1])
+    with col_wb2:
+        horizon = st.selectbox("Horizon", [3, 5, 7, 10, 14], index=2, key="wb_horizon")
+    wb = api_get(f"/physical/water_balance?horizon_days={horizon}")
+    if wb and wb.get("forecast"):
+        fc = wb["forecast"]
+        df_wb = pd.DataFrame(fc)
+        if not df_wb.empty:
+            import plotly.graph_objects as go
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=df_wb["day"], y=df_wb["vwc_pct"],
+                mode="lines+markers", name="VWC%",
+                line=dict(color="#3b82f6", width=2),
+            ))
+            if "field_capacity_pct" in df_wb.columns:
+                fig.add_hline(
+                    y=df_wb["field_capacity_pct"].iloc[0],
+                    line_dash="dot", line_color="#22c55e",
+                    annotation_text="FC",
+                )
+            if "wilting_point_pct" in df_wb.columns:
+                fig.add_hline(
+                    y=df_wb["wilting_point_pct"].iloc[0],
+                    line_dash="dot", line_color="#ef4444",
+                    annotation_text="WP",
+                )
+            # Highlight stressed days
+            stress_days = [d for d in fc if d.get("stressed")]
+            if stress_days:
+                sx = [d["day"] for d in stress_days]
+                sy = [d["vwc_pct"] for d in stress_days]
+                fig.add_trace(go.Scatter(
+                    x=sx, y=sy, mode="markers",
+                    marker=dict(color="red", size=10, symbol="x"),
+                    name="Stress",
+                ))
+            fig.update_layout(
+                height=280,
+                margin=dict(l=0, r=0, t=24, b=0),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#e2e8f0"),
+                xaxis=dict(title="Day", gridcolor="#334155"),
+                yaxis=dict(title="VWC (%)", gridcolor="#334155"),
+                legend=dict(orientation="h"),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Summary table
+            with st.expander("Daily forecast table"):
+                disp = df_wb[["day", "vwc_pct", "et0_mm", "available_water_mm"]
+                             if "available_water_mm" in df_wb.columns
+                             else ["day", "vwc_pct", "et0_mm"]].copy()
+                st.dataframe(disp, use_container_width=True)
+    else:
+        st.info("Water balance forecast unavailable — check that model_runner is running.")
+
+    # ── Compaction risk meter ────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Compaction Risk")
+    col_cr1, col_cr2 = st.columns([3, 1])
+    with col_cr2:
+        passes = st.number_input("Machinery passes (last 30d)", 0, 20, 0, key="cr_passes")
+    cr = api_get(f"/physical/compaction_risk?machinery_passes={passes}")
+    if cr:
+        risk_score = cr.get("risk_score", 0)
+        risk_level = cr.get("risk_level", "unknown")
+        risk_colors = {"low": "#22c55e", "moderate": "#f59e0b",
+                       "high": "#ef4444", "critical": "#dc2626", "unknown": "#64748b"}
+        col_a, col_b = st.columns(2)
+        with col_a:
+            color = risk_colors.get(risk_level, "#64748b")
+            st.markdown(
+                f"<div style='background:{color}22;border:2px solid {color};"
+                f"border-radius:8px;padding:16px;text-align:center;'>"
+                f"<div style='font-size:2.5rem;font-weight:700;color:{color}'>{risk_score:.0f}</div>"
+                f"<div style='color:{color};text-transform:uppercase;font-size:0.75rem'>{risk_level} risk</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        with col_b:
+            st.write(f"**BD:** {cr.get('bulk_density', '—')} g/cm³")
+            st.write(f"**Moisture:** {cr.get('moisture_pct', '—'):.1f}%")
+            st.write(f"**Action:** {cr.get('action', '—')}")
+            if cr.get("note"):
+                st.caption(cr["note"])
+    else:
+        st.info("Compaction risk data unavailable.")
+
+    # ── Erosion risk ─────────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Erosion Risk (RUSLE)")
+    with st.expander("Configure site parameters", expanded=False):
+        col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+        with col_e1:
+            slope = st.number_input("Slope (%)", 0.0, 100.0, 2.0, 0.5, key="er_slope")
+        with col_e2:
+            slope_len = st.number_input("Slope length (m)", 1.0, 500.0, 50.0, 5.0, key="er_len")
+        with col_e3:
+            cover = st.number_input("Cover factor C (0–1)", 0.0, 1.0, 0.3, 0.05, key="er_cover")
+        with col_e4:
+            support = st.number_input("Practice P (0–1)", 0.1, 1.0, 1.0, 0.1, key="er_support")
+
+    er = api_get(
+        f"/physical/erosion_risk?slope_pct={slope}&slope_length_m={slope_len}"
+        f"&cover_factor={cover}&support_practice={support}"
+    )
+    if er:
+        soil_loss  = er.get("soil_loss_t_ha_yr", 0)
+        risk_class = er.get("risk_class", "unknown")
+        dominant   = er.get("dominant_factor", "—")
+        er_colors  = {
+            "Very Low": "#22c55e", "Low": "#84cc16",
+            "Moderate": "#f59e0b", "High": "#ef4444",
+            "Very High": "#dc2626", "unknown": "#64748b",
+        }
+        col_ea, col_eb = st.columns(2)
+        with col_ea:
+            color = er_colors.get(risk_class, "#64748b")
+            st.markdown(
+                f"<div style='background:{color}22;border:2px solid {color};"
+                f"border-radius:8px;padding:16px;text-align:center;'>"
+                f"<div style='font-size:2rem;font-weight:700;color:{color}'>{soil_loss:.1f} t/ha/yr</div>"
+                f"<div style='color:{color};text-transform:uppercase;font-size:0.75rem'>{risk_class}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        with col_eb:
+            factors = er.get("factors", {})
+            st.write(f"**Dominant factor:** {dominant}")
+            st.write(f"R = {factors.get('R', '—')} · K = {factors.get('K', '—')}")
+            st.write(f"LS = {factors.get('LS', '—')} · C = {factors.get('C', '—')} · P = {factors.get('P', '—')}")
+            if er.get("recommendation"):
+                st.info(er["recommendation"])
+    else:
+        st.info("Erosion risk data unavailable.")
+
+    # ── Override controls ────────────────────────────────────────────────────
     st.divider()
     st.subheader("Manual Override")
     with st.form("physical_override"):
-        field = st.selectbox("Parameter", physical_fields)
-        value = st.number_input("New Value", step=0.1)
-        reason = st.text_input("Reason for override")
-        if st.form_submit_button("Apply Override"):
-            result = api_post("/ui/scientist/override", {"field": field, "value": value, "reason": reason})
-            if result and "error" not in result:
-                st.success(f"Override applied: {field} = {value}")
+        field = st.selectbox("Parameter", physical_fields,
+                             format_func=lambda f: field_labels[f][0], key="po_field")
+        value = st.number_input("New Value", step=0.01, key="po_value")
+        reason = st.text_input("Reason for override", key="po_reason")
+        if st.form_submit_button("Apply Physical Override"):
+            result = api_post("/physical/override", {"field": field, "value": value, "reason": reason})
+            if result and result.get("status") == "ok":
+                st.success(f"Override applied: {field_labels[field][0]} = {value} {field_labels[field][1]}")
             else:
                 st.error(str(result))
 
-    # Threshold editing
+    # ── Threshold editing ────────────────────────────────────────────────────
     st.divider()
     st.subheader("Threshold Configuration")
+    thresholds = summary.get("thresholds", {})
     for field in physical_fields:
         t = summary.get("thresholds", {}).get(field, {})
         if t:
-            with st.expander(f"{field} — warn: {t.get('warn')}, crit: {t.get('crit')}"):
-                new_warn = st.number_input(f"Warning threshold", value=float(t.get("warn", 0)), key=f"tw_{field}")
-                new_crit = st.number_input(f"Critical threshold", value=float(t.get("crit", 0)), key=f"tc_{field}")
-                if st.button(f"Update {field} thresholds", key=f"tb_{field}"):
-                    result = api_post("/ui/scientist/threshold", {"field": field, "warn": new_warn, "crit": new_crit})
+            with st.expander(f"{label} — warn: {t.get('warn')} {unit} · crit: {t.get('crit')} {unit}"):
+                col_t1, col_t2 = st.columns(2)
+                with col_t1:
+                    new_warn = st.number_input(
+                        "Warning threshold", value=float(t.get("warn", 0)),
+                        step=0.01, key=f"tw_{field}",
+                    )
+                with col_t2:
+                    new_crit = st.number_input(
+                        "Critical threshold", value=float(t.get("crit", 0)),
+                        step=0.01, key=f"tc_{field}",
+                    )
+                if st.button(f"Update {label} thresholds", key=f"tb_{field}"):
+                    result = api_post("/ui/scientist/threshold",
+                                      {"field": field, "warn": new_warn, "crit": new_crit})
                     if result and "error" not in result:
                         st.success("Threshold updated")
                     else:

@@ -21,7 +21,7 @@ import json
 import paho.mqtt.client as mqtt
 from transitions import Machine
 
-from shared.redis_io  import set_state, set_latest
+from shared.redis_io  import set_state, set_latest, get_latest_cached
 from shared.influx_io import write_point, get_latest
 from shared.mongo_io  import log_event, save_state_transition
 from shared.config    import (
@@ -122,8 +122,24 @@ class SoilParcelController:
         if mst_val is not None and mst_t_hi is not None and mst_val > mst_t_hi["warn"]:
             water_triggers.append({"field": "soil_moisture_pct", "value": mst_val,
                                     "threshold": mst_t_hi["warn"], "stress_type": "waterlogged"})
+
+        # Cross-domain: amplify urgency if plant water demand is high
         if water_triggers:
-            active["S5"] = {"name": "Water-Stressed", "triggers": water_triggers}
+            urgency = "normal"
+            try:
+                import json as _json
+                plant_raw = get_latest_cached("cross_domain_plant_demand")
+                if plant_raw:
+                    plant = _json.loads(plant_raw) if isinstance(plant_raw, str) else plant_raw
+                    demand = plant.get("plant_water_demand_mm_day")
+                    if demand and float(demand) > 5.0:
+                        urgency = "high"
+            except Exception:
+                pass
+            active["S5"] = {"name": "Water-Stressed", "triggers": water_triggers,
+                            "urgency": urgency}
+        elif not water_triggers:
+            pass  # S5 not active
 
         # S6: Organic Matter Depleted
         om_val = values.get("organic_matter_pct")
@@ -263,7 +279,7 @@ class SoilParcelController:
         return self.state, alerts, depletion
 
     @staticmethod
-    def _depletion_message(code: str, info: dict, trigger: dict) -> str:
+    def _depletion_message(code: str, _info: dict, trigger: dict) -> str:
         field = trigger.get("field", "")
         value = trigger.get("value", 0)
         messages = {
