@@ -168,7 +168,9 @@ def get_live_sensor_readings(asset_id: str) -> dict:
             observed = timestamp.to_pydatetime() if hasattr(timestamp, "to_pydatetime") else timestamp
             if observed.tzinfo is None:
                 observed = observed.replace(tzinfo=timezone.utc)
-            age_minutes = round((now - observed).total_seconds() / 60.0, 1)
+            # Clamped at zero: the server's clock and this machine's differ by
+            # a fraction of a second, which otherwise surfaces as a negative age.
+            age_minutes = max(0.0, round((now - observed).total_seconds() / 60.0, 1))
             timestamp = observed.isoformat()
 
         out[field] = {
