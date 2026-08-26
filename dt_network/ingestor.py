@@ -8,6 +8,7 @@ Invalid messages are re-published to a dead-letter topic for debugging.
 """
 import json
 import paho.mqtt.client as mqtt
+from shared.mqtt_io import make_client
 from pydantic import BaseModel, ValidationError, field_validator
 from typing import Optional
 
@@ -121,7 +122,7 @@ def _on_connect(client, userdata, flags, rc):
 
 def start():
     global _mqttc
-    _mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, f"ingestor_{ASSET_ID}")
+    _mqttc = make_client(f"ingestor_{ASSET_ID}")
     _mqttc.on_connect = _on_connect
     _mqttc.on_message = _on_message
     _mqttc.connect(MQTT_BROKER, MQTT_PORT)

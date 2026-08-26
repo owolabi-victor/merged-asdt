@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
+from shared.mqtt_io import make_client
 
 from shared.config import (
     ACTIVE_SOIL_TYPE,
@@ -73,10 +74,18 @@ def _to_epoch(iso_timestamp):
 
 
 def build_payload(timestamp, moisture_pct, temp_c, nominal):
-    """One telemetry message matching the simulator's contract."""
-    payload = {f: nominal.get(f) for f in SENSOR_FIELDS}
+    """
+    One telemetry message matching the simulator's contract.
 
-    # The measured value replaces the nominal one.
+    Fields the node cannot measure are sent as None, not as soil-type nominals.
+    Publishing a plausible number for nitrogen or pH means the reactive rules and
+    the LLM agent reason over a value nobody measured, and can conclude
+    "nitrogen depleted" from an invention. The consuming layers already guard
+    every field with `is not None`, so absence is handled - it was the invented
+    values that bypassed that safety.
+    """
+    payload = {f: None for f in SENSOR_FIELDS}
+
     payload["soil_moisture_pct"] = round(moisture_pct, 2)
     if temp_c is not None:
         payload["soil_temp_c"] = round(temp_c, 2)
@@ -120,9 +129,11 @@ def main():
     print(f"[REAL] {len(readings)} readings, "
           f"moisture {min(moistures):.1f}%..{max(moistures):.1f}%")
 
+    # Retained only so the signature stays stable; values are no longer taken
+    # from it. See build_payload().
     nominal = NOMINAL_BY_TYPE.get(ACTIVE_SOIL_TYPE, NOMINAL_BY_TYPE["loamy"])
 
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, f"real_sensor_{ASSET_ID}")
+    client = make_client(f"real_sensor_{ASSET_ID}")
     client.connect(MQTT_BROKER, MQTT_PORT)
     client.loop_start()
     print(f"[REAL] publishing to {TOPIC_TELEMETRY} every {args.interval}s")

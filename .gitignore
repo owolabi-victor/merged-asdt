@@ -61,3 +61,6 @@ data/
 # OS
 Thumbs.db
 .DS_Store
+
+# Cloud credentials — every managed-service secret lives here
+.env.cloud

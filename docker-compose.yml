@@ -19,7 +19,7 @@
 #   7379  → Redis (shared)
 #   8474  → Neo4j browser (shared)
 #   8687  → Neo4j bolt (shared)
-#   9000  → ASDT Twin API (FastAPI via Docker)
+#   9500  → ASDT Twin API (FastAPI via Docker)  [9000 is taken by the asdt2 stack]
 #   9080  → Eclipse Ditto nginx (cross-domain)
 #   9086  → InfluxDB (shared)
 #   9501  → ASDT Scientist UI (Streamlit)
@@ -173,7 +173,7 @@ services:
     image: python:3.11-slim
     container_name: merged_asdt_twin_api
     ports:
-      - "9000:8080"
+      - "9500:8080"
     environment:
       MONGO_URI: "mongodb://admin:password@mongodb:27017"
       MONGO_DB: "asdt"

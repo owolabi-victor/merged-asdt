@@ -17,12 +17,20 @@ from service_layer.ditto_client import update_feature
 def sync_once():
     # Sync live soil telemetry (all 11 parameters)
     telemetry = {f: get_latest(f) for f in SENSOR_FIELDS}
-    telemetry = {k: v for k, v in telemetry.items() if v is not None}
-    if telemetry:
-        update_feature("telemetry", telemetry)
+
+    # Send null for fields with no reading. Under merge-patch semantics that
+    # removes the property, so the Thing shows nothing rather than a stale value
+    # from create_thing - which seeds every field with 0 and therefore reads as
+    # a measured zero. Omitting the key would leave that stale 0 in place.
+    payload = {k: (v if v is not None else None) for k, v in telemetry.items()}
+    if any(v is not None for v in payload.values()):
+        update_feature("telemetry", payload)
 
     # Sync soil health
-    health_score = get_latest_cached("soil_health_score") or 100.0
+    # A genuine score of 0 (worst) is falsy and would be reported as 100
+    # (perfect). Only a real absence may fall back.
+    _hs = get_latest_cached("soil_health_score")
+    health_score = 100.0 if _hs is None else float(_hs)
     is_anomaly   = bool(get_latest_cached("is_anomaly") or False)
     current_state = get_state()
 

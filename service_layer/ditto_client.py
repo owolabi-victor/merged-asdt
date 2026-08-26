@@ -12,6 +12,10 @@ from shared.mongo_io import get_asset_metadata
 
 AUTH = (DITTO_USER, DITTO_PASS)
 HDR  = {"Content-Type": "application/json"}
+# Ditto rejects a PATCH sent as plain application/json with 415. The merge-patch
+# media type is required, and without it every feature update is discarded while
+# the twin appears to be syncing.
+PATCH_HDR = {"Content-Type": "application/merge-patch+json"}
 
 
 def _put(url: str, payload: dict, retries: int = 5, delay: int = 15) -> int:
@@ -127,8 +131,11 @@ def update_feature(feature: str, props: dict) -> int:
     try:
         r = httpx.patch(
             f"{DITTO_URL}/api/2/things/{THING_ID}/features/{feature}/properties",
-            auth=AUTH, headers=HDR, json=props, timeout=10,
+            auth=AUTH, headers=PATCH_HDR, json=props, timeout=10,
         )
+        if r.status_code >= 400:
+            print(f"[DITTO] feature '{feature}' update rejected: "
+                  f"HTTP {r.status_code} {r.text[:120]}")
         return r.status_code
     except Exception:
         return 0

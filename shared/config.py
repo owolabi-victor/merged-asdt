@@ -29,6 +29,11 @@ ASSET_TYPE = os.getenv("ASSET_TYPE", "soil_parcel")
 # ── MQTT ──────────────────────────────────────────────────────────────────────
 MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
 MQTT_PORT   = int(os.getenv("MQTT_PORT", 1883))
+# Hosted brokers (HiveMQ Cloud and friends) are TLS-only and require auth.
+# Empty username keeps the local anonymous broker working unchanged.
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
+MQTT_TLS      = os.getenv("MQTT_TLS", "").lower() in ("1", "true", "yes")
 TOPIC_TELEMETRY = f"dt/{ASSET_ID}/telemetry"
 TOPIC_CONTROL   = f"dt/{ASSET_ID}/control"
 TOPIC_STATE     = f"dt/{ASSET_ID}/state"

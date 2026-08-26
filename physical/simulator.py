@@ -16,6 +16,7 @@ import time
 import json
 import random
 import paho.mqtt.client as mqtt
+from shared.mqtt_io import make_client
 
 from shared.config import (
     MQTT_BROKER, MQTT_PORT, TOPIC_TELEMETRY,
@@ -213,7 +214,7 @@ def main():
         fault_mode_physical=fault_mode_physical,
         fault_probability=0.05,
     )
-    mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, f"simulator_{ASSET_ID}")
+    mqttc = make_client(f"simulator_{ASSET_ID}")
     mqttc.connect(MQTT_BROKER, MQTT_PORT)
     mqttc.loop_start()
 

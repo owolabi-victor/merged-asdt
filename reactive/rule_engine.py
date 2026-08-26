@@ -19,6 +19,7 @@ Depletion states detected:
 import time
 import json
 import paho.mqtt.client as mqtt
+from shared.mqtt_io import make_client
 from transitions import Machine
 
 from shared.redis_io  import set_state, set_latest, get_latest_cached
@@ -303,7 +304,7 @@ class SoilParcelController:
 
 def run():
     ctrl  = SoilParcelController()
-    mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, f"rule_engine_{ASSET_ID}")
+    mqttc = make_client(f"rule_engine_{ASSET_ID}")
     mqttc.connect(MQTT_BROKER, MQTT_PORT)
     mqttc.loop_start()
     ctrl.set_mqtt_client(mqttc)

@@ -392,8 +392,13 @@ def get_water_balance_forecast(
     days: int = 7,
 ) -> list[dict]:
     """Return 7-day VWC forecast using current sensor readings."""
-    current_vwc = get_latest("soil_moisture_pct") or _FC.get(soil_type, 32.0)
-    current_temp = get_latest("soil_temp_c") or 24.5
+    # `or` treats a genuine 0.0 % reading as missing and substitutes field
+    # capacity, so bone-dry soil silently forecasts as well-watered. Only a
+    # real absence (None) may fall back.
+    _vwc = get_latest("soil_moisture_pct")
+    current_vwc = _FC.get(soil_type, 32.0) if _vwc is None else float(_vwc)
+    _temp = get_latest("soil_temp_c")
+    current_temp = 24.5 if _temp is None else float(_temp)
     return _wb_model.forecast(
         soil_type=soil_type,
         current_vwc=current_vwc,
