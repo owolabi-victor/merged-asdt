@@ -392,7 +392,7 @@ def render_integrated_view():
     st.markdown("""
     <div class="sci-header">
         <h1>🔬 Integrated Soil Dashboard</h1>
-        <p>Complete observability across Physical, Chemical, and Biological domains</p>
+        <p>Live observability of the physical soil segment, from the deployed sensor node</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -537,7 +537,12 @@ def render_physical():
                 st.caption(f"warn < {warn} · crit < {crit} {unit}")
 
     # ── S4 / S5 depletion state alerts ──────────────────────────────────────
-    if phys_api:
+    # A depletion state is asserted about a measured parcel. When every physical
+    # field reads no_data the state in the cache belongs to some earlier run, and
+    # showing it next to three empty cards asserts a condition nothing observed.
+    have_reading = any(sensors.get(f, {}).get("value") is not None
+                       for f in physical_fields)
+    if phys_api and have_reading:
         phys_states = phys_api.get("physical_depletion_states", [])
         if phys_states:
             st.divider()
@@ -572,11 +577,12 @@ def render_physical():
     st.subheader("Time Series")
     time_opt = st.radio(
         "Range",
-        ["1 hour", "6 hours", "24 hours", "7 days"],
+        ["15 min", "1 hour", "6 hours", "24 hours", "7 days"],
         horizontal=True,
         key="phys_time_range",
     )
-    minutes_map = {"1 hour": 60, "6 hours": 360, "24 hours": 1440, "7 days": 10080}
+    minutes_map = {"15 min": 15, "1 hour": 60, "6 hours": 360,
+                   "24 hours": 1440, "7 days": 10080}
     minutes = minutes_map[time_opt]
     for field in physical_fields:
         time_series_chart(field, minutes)
@@ -929,7 +935,10 @@ def render_soil_parameters():
     new_thresholds = {}
     new_ranges = {}
 
-    for category in ("Physical", "Chemical", "Biological"):
+    # Physical only. Thresholds for parameters no instrument reports could be
+    # set but never evaluated, so the page invited the user to tune alerting on
+    # data that does not exist.
+    for category in ("Physical",):
         fields_in_cat = [f for f, (_, cat) in _PARAM_META.items() if cat == category]
         st.markdown(f"#### {category} Parameters")
 
