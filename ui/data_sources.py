@@ -117,12 +117,54 @@ def save_manual_batch(user_id: str, parcel_id: str, readings: dict,
     return len(docs)
 
 
+def get_live_sensor_readings(asset_id: str) -> dict:
+    """
+    Latest readings for a parcel bound to a physical sensor asset.
+
+    Telemetry from the node lands on the asset (Redis cache, InfluxDB history),
+    not in manual_readings, so a parcel in sensor mode has to be read from
+    there. Fields the node does not measure are omitted entirely rather than
+    returned as zero, so the caller can distinguish "no instrument" from "a
+    reading of zero".
+    """
+    from shared.redis_io import get_latest_cached
+    from shared.influx_io import get_latest
+
+    out = {}
+    for field in SENSOR_FIELDS:
+        value = get_latest_cached(field)
+        if value is None:
+            value = get_latest(field)
+        if value is None:
+            continue
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            continue
+        out[field] = {
+            "value": value,
+            "timestamp": None,
+            "source": "sensor",
+            "age_minutes": 0.0,
+        }
+    return out
+
+
 def get_user_latest_readings(user_id: str, parcel_id: str) -> dict:
     """
     Get the latest reading for each sensor field for a specific user-parcel.
     Returns {field: {value, timestamp, source, age_minutes}, ...}
     Only returns fields that have actual data — no assumptions.
     """
+    # A parcel bound to a sensor reads live telemetry; manual_readings is the
+    # fallback for parcels with no instrument attached.
+    cfg = get_user_data_source(user_id, parcel_id) or {}
+    if cfg.get("mode") == "sensor":
+        asset = (cfg.get("config") or {}).get("asset_id") or cfg.get("asset_id")
+        live = get_live_sensor_readings(asset or parcel_id)
+        if live:
+            return live
+
     result = {}
     for field in SENSOR_FIELDS:
         latest = _db.manual_readings.find_one(

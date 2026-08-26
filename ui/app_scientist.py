@@ -204,7 +204,19 @@ def login_page():
                             "parcels": [r_lab or f"site_{r_name.lower().replace(' ', '_')}"],
                         })
                         if result and "user_id" in result:
-                            st.success("Account created. Switch to the **Sign In** tab to log in.")
+                            # Sign the user straight in. Making them retype the
+                            # credentials they just chose is friction with no
+                            # purpose, and the previous message left them on a
+                            # tab that looked like a dead end.
+                            login = api_post("/auth/login",
+                                             {"email": r_email, "password": r_password})
+                            if login and "access_token" in login:
+                                st.session_state.token = login["access_token"]
+                                st.session_state.user = login.get("user", {})
+                                st.rerun()
+                            else:
+                                st.success("Account created. Switch to the "
+                                           "**Sign In** tab to log in.")
                         else:
                             st.error(result.get("error", "Registration failed"))
 

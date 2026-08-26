@@ -205,6 +205,20 @@ class ChatRequest(BaseModel):
 async def api_register(req: RegisterRequest):
     parcels = req.parcels or [f"parcel_{uuid.uuid4().hex[:8]}"]
     result = register_user(req.email, req.password, req.role, req.name, parcels)
+
+    # Bind each new parcel to the physical sensor asset so live telemetry is
+    # visible immediately. Without this a new parcel has mode "none" and the
+    # dashboard shows an empty manual-entry form, which is what made the node's
+    # readings appear nowhere in the interface. Manual entry remains available
+    # for parcels with no instrument; changing the mode in Settings switches it.
+    if result and "user_id" in result:
+        try:
+            from ui.data_sources import set_user_data_source
+            for parcel in parcels:
+                set_user_data_source(result["user_id"], parcel, mode="sensor",
+                                     config={"asset_id": ASSET_ID})
+        except Exception as exc:            # never fail registration over this
+            logger.warning(f"could not bind parcel to sensor: {exc}")
     if "error" in result:
         raise HTTPException(400, result["error"])
     return result
