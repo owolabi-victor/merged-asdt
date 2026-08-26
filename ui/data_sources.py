@@ -21,6 +21,11 @@ from shared.config import MONGO_URI, MONGO_DB, SENSOR_FIELDS
 _client = MongoClient(MONGO_URI)
 _db = _client[MONGO_DB]
 
+# How far back to look for a node's last reading. Wide enough that a node which
+# stopped a few hours ago still shows its final value with an honest age, rather
+# than vanishing from the dashboard as though it had never reported.
+INFLUX_LOOKBACK_MIN = 360
+
 
 # ── Data source CRUD ────────────────────────────────────────────────────────
 
@@ -127,25 +132,50 @@ def get_live_sensor_readings(asset_id: str) -> dict:
     returned as zero, so the caller can distinguish "no instrument" from "a
     reading of zero".
     """
+    from shared.influx_io import query_recent
     from shared.redis_io import get_latest_cached
-    from shared.influx_io import get_latest
 
+    now = datetime.now(timezone.utc)
     out = {}
     for field in SENSOR_FIELDS:
-        value = get_latest_cached(field)
+        # InfluxDB carries the observation time; the Redis cache holds only the
+        # value. Ask Influx first so the reading arrives with the instant it was
+        # taken, and fall back to the cache when the history window is empty.
+        timestamp = None
+        value = None
+        try:
+            df = query_recent(field, minutes=INFLUX_LOOKBACK_MIN)
+            if not df.empty:
+                value = float(df["_value"].iloc[-1])
+                timestamp = df["_time"].iloc[-1]
+        except Exception:
+            pass
+
         if value is None:
-            value = get_latest(field)
+            value = get_latest_cached(field)
+
         if value is None:
             continue
         try:
             value = float(value)
         except (TypeError, ValueError):
             continue
+
+        # age stays None when the timestamp is unknown. Reporting 0.0 there
+        # would render as "just now" on a reading that could be hours stale.
+        age_minutes = None
+        if timestamp is not None:
+            observed = timestamp.to_pydatetime() if hasattr(timestamp, "to_pydatetime") else timestamp
+            if observed.tzinfo is None:
+                observed = observed.replace(tzinfo=timezone.utc)
+            age_minutes = round((now - observed).total_seconds() / 60.0, 1)
+            timestamp = observed.isoformat()
+
         out[field] = {
             "value": value,
-            "timestamp": None,
+            "timestamp": timestamp,
             "source": "sensor",
-            "age_minutes": 0.0,
+            "age_minutes": age_minutes,
         }
     return out
 

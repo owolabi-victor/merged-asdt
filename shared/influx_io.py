@@ -9,7 +9,15 @@ from shared.config import INFLUX_URL, INFLUX_TOKEN, INFLUX_ORG, INFLUX_BUCKET, A
 # Suppress the pivot warning — we query one field at a time intentionally
 warnings.simplefilter("ignore", MissingPivotFunction)
 
-_client    = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
+# A field demo runs on whatever network the venue provides, and the default
+# 10 s timeout with no retry meant one slow round-trip raised ReadTimeoutError
+# out of write_point, killed the caller's telemetry handler, and the twin then
+# went quiet permanently even after the link recovered. Allow a longer wait and
+# let the client retry before giving up.
+_TIMEOUT_MS = 30_000
+
+_client    = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG,
+                            timeout=_TIMEOUT_MS, enable_gzip=True)
 _write_api = _client.write_api(write_options=SYNCHRONOUS)
 _query_api = _client.query_api()
 
@@ -22,7 +30,16 @@ def write_point(measurement: str, fields: dict, tags: dict = None):
             p = p.tag(k, v)
     for k, v in fields.items():
         p = p.field(k, float(v))
-    _write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=p)
+
+    # A dropped point costs one sample; a raised exception costs every sample
+    # after it, because the caller unwinds and stops reading the sensor. Report
+    # the failure and carry on.
+    try:
+        _write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=p)
+        return True
+    except Exception as exc:
+        print(f"[influx] write dropped ({type(exc).__name__}: {exc})", flush=True)
+        return False
 
 
 def query_recent(field: str, minutes: int = 10) -> pd.DataFrame:
@@ -34,9 +51,15 @@ def query_recent(field: str, minutes: int = 10) -> pd.DataFrame:
           |> filter(fn:(r) => r._field == "{field}")
           |> sort(columns:["_time"])
     '''
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", MissingPivotFunction)
-        result = _query_api.query_data_frame(flux, org=INFLUX_ORG)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", MissingPivotFunction)
+            result = _query_api.query_data_frame(flux, org=INFLUX_ORG)
+    except Exception as exc:
+        # An unreachable history is an empty history to every caller here, and
+        # they all handle empty. Raising would blank the whole dashboard.
+        print(f"[influx] query failed ({type(exc).__name__}: {exc})", flush=True)
+        return pd.DataFrame(columns=["_time", "_value"])
 
     if isinstance(result, list):
         result = pd.concat(result) if result else pd.DataFrame()

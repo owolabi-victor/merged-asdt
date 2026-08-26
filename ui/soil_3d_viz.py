@@ -422,26 +422,35 @@ def _geometry_panel(api_get, api_patch, parcel_id: str, geo: dict) -> dict:
 # ── Readings entry form ───────────────────────────────────────────────────────
 
 # field → (category, label, unit, min_val, max_val, step, default)
+# Final tuple element is the form default. It is 0.0 for every field: a
+# pre-filled plausible number is indistinguishable from a measurement once
+# saved, and the form treats 0 as "skipped", so nothing is recorded unless the
+# user actually types it.
 _FIELD_META = {
-    "soil_moisture_pct":              ("Physical",    "Soil Moisture (%)",         "%",             0.0,  100.0, 0.1,   25.0),
-    "bulk_density_g_cm3":             ("Physical",    "Bulk Density (g/cm³)",      "g/cm³",         0.5,    2.5, 0.01,   1.2),
-    "soil_temp_c":                    ("Physical",    "Soil Temperature (°C)",     "°C",            0.0,   60.0, 0.1,   22.0),
-    "soil_ph":                        ("Chemical",    "Soil pH",                   "pH",            3.0,    9.0, 0.1,    6.5),
-    "nitrogen_ppm":                   ("Chemical",    "Nitrogen (ppm)",            "ppm",           0.0, 1000.0, 1.0,  100.0),
-    "phosphorus_ppm":                 ("Chemical",    "Phosphorus (mg/kg)",        "mg/kg",         0.0,  500.0, 1.0,   30.0),
-    "potassium_ppm":                  ("Chemical",    "Potassium (mg/kg)",         "mg/kg",         0.0, 1000.0, 1.0,  150.0),
-    "ec_ds_m":                        ("Chemical",    "Elect. Conductivity (dS/m)","dS/m",          0.0,   10.0, 0.01,   0.4),
-    "organic_matter_pct":             ("Chemical",    "Organic Matter (%)",        "%",             0.0,   30.0, 0.1,    2.5),
-    "microbial_biomass_mg_c_kg":      ("Biological",  "Microbial Biomass (mg C/kg)","mg C/kg",     0.0, 2000.0, 1.0,  200.0),
-    "soil_respiration_mg_co2_kg_day": ("Biological",  "Soil Respiration (mg CO₂/kg/day)","mg CO₂/kg/day",0.0,500.0,0.1,25.0),
+    "soil_moisture_pct":              ("Physical", "Soil Moisture (%)",         "%",             0.0,  100.0, 0.1,   25.0),
+    "bulk_density_g_cm3":             ("Physical", "Bulk Density (g/cm³)",      "g/cm³",         0.5,    2.5, 0.01,   1.2),
+    "soil_temp_c":                    ("Physical", "Soil Temperature (°C)",     "°C",            0.0,   60.0, 0.1,   22.0),
+    "soil_ph":                        ("Chemical", "Soil pH", "pH", 3.0, 9.0, 0.1, 0.0),
+    "nitrogen_ppm":                   ("Chemical", "Nitrogen (ppm)",            "ppm",           0.0, 1000.0, 1.0,  100.0),
+    "phosphorus_ppm":                 ("Chemical", "Phosphorus (mg/kg)",        "mg/kg",         0.0,  500.0, 1.0,   30.0),
+    "potassium_ppm":                  ("Chemical", "Potassium (mg/kg)",         "mg/kg",         0.0, 1000.0, 1.0,  150.0),
+    "ec_ds_m":                        ("Chemical", "Elect. Conductivity (dS/m)","dS/m",          0.0,   10.0, 0.01,   0.4),
+    "organic_matter_pct":             ("Chemical", "Organic Matter (%)",        "%",             0.0,   30.0, 0.1,    2.5),
+    "microbial_biomass_mg_c_kg":      ("Biological", "Microbial Biomass (mg C/kg)","mg C/kg",     0.0, 2000.0, 1.0,  200.0),
+    "soil_respiration_mg_co2_kg_day": ("Biological", "Soil Respiration (mg CO₂/kg/day)","mg CO₂/kg/day",0.0,500.0,0.1,25.0),
 }
 
 
 def _render_readings_entry_form(api_post, parcel_id: str, summary: dict,
                                  current_sensors: dict, *, expanded: bool = True):
     """
-    Form for entering or updating all 11 soil parameters for a parcel.
-    Uses existing sensor values as pre-filled defaults if available.
+    Manual entry for the physical soil parameters.
+
+    Restricted to the physical domain because that is what the deployed node
+    instruments. Offering chemical and biological fields invited values that
+    nothing had measured, and the dashboard then presented them alongside
+    genuine sensor readings with no way to tell them apart. Manual entry is the
+    fallback for a parcel with no sensor attached, not a substitute for one.
     """
     soil_type = summary.get("soil_type", "")
     avail     = summary.get("data_availability", {})
@@ -450,7 +459,7 @@ def _render_readings_entry_form(api_post, parcel_id: str, summary: dict,
     with st.expander(
         f"📝 Enter / Update Soil Readings  "
         f"({'%.0f' % pct}% complete — {len(avail.get('fields_with_data', []))} / "
-        f"{len(_FIELD_META)} fields)",
+        f"{len([m for m in _FIELD_META.values() if m[0] == 'Physical'])} physical fields)",
         expanded=expanded,
     ):
         if not api_post:
@@ -459,12 +468,13 @@ def _render_readings_entry_form(api_post, parcel_id: str, summary: dict,
 
         st.caption(
             f"Parcel: `{parcel_id}` · Soil type: **{soil_type or 'not set'}** · "
-            "Enter your measured values. Leave fields at 0 to skip them."
+            "Enter values you have measured yourself. Leave a field at 0 to skip "
+            "it — a skipped field is recorded as absent, not as zero."
         )
 
         new_vals: dict[str, float] = {}
 
-        for cat in ("Physical", "Chemical", "Biological"):
+        for cat in ("Physical",):
             cat_fields = [(k, v) for k, v in _FIELD_META.items() if v[0] == cat]
             st.markdown(f"**{cat}**")
             cols = st.columns(len(cat_fields))

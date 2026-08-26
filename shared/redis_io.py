@@ -11,21 +11,48 @@ import redis
 import json
 from shared.config import REDIS_URL, ASSET_ID
 
-_r = redis.from_url(REDIS_URL, decode_responses=True)
+# Managed Redis sits across the internet here, not on loopback, so a slow link
+# has to be tolerated rather than treated as an error. Retry the round-trip and
+# keep the socket alive between the infrequent telemetry writes.
+_r = redis.from_url(
+    REDIS_URL,
+    decode_responses=True,
+    socket_timeout=15,
+    socket_connect_timeout=15,
+    socket_keepalive=True,
+    retry_on_timeout=True,
+    health_check_interval=30,
+)
 
 
 # ── Latest sensor value cache ─────────────────────────────────────────────────
 
 def set_latest(field: str, value):
-    """Cache the most recent value of any field under the asset hash."""
-    _r.hset(f"{ASSET_ID}:latest", field, json.dumps(value))
+    """
+    Cache the most recent value of any field under the asset hash.
+
+    The cache is an optimisation over InfluxDB, so losing a write costs a
+    round-trip later, not the reading. Never let it break the ingest path.
+    """
+    try:
+        _r.hset(f"{ASSET_ID}:latest", field, json.dumps(value))
+        return True
+    except redis.RedisError as exc:
+        print(f"[redis] cache write dropped ({type(exc).__name__}: {exc})", flush=True)
+        return False
 
 def get_latest_cached(field: str):
     """
     Retrieve the cached value of a field.
     Returns None if not yet set — callers must handle None.
     """
-    raw = _r.hget(f"{ASSET_ID}:latest", field)
+    try:
+        raw = _r.hget(f"{ASSET_ID}:latest", field)
+    except redis.RedisError as exc:
+        # Indistinguishable from "not cached" to every caller, and they all fall
+        # through to InfluxDB, which is the authoritative store anyway.
+        print(f"[redis] cache read failed ({type(exc).__name__}: {exc})", flush=True)
+        return None
     return json.loads(raw) if raw else None
 
 

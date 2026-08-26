@@ -1026,18 +1026,15 @@ def render_soil_data():
     st.divider()
     st.markdown("#### ➕ Add a Measurement")
     with st.form("add_reading_form"):
+        # Physical parameters only. The chemical and biological fields that used
+        # to be listed here need laboratory assay, and a farmer typing a number
+        # into them produced a value the dashboard then displayed exactly like a
+        # sensor reading. Manual entry is the fallback for a parcel whose node is
+        # offline, so it covers what the node itself measures and nothing more.
         all_fields = [
-            ("soil_ph", "Soil pH"),
             ("soil_moisture_pct", "Soil Moisture (%)"),
-            ("nitrogen_ppm", "Nitrogen (ppm)"),
-            ("phosphorus_ppm", "Phosphorus (mg/kg)"),
-            ("potassium_ppm", "Potassium (mg/kg)"),
-            ("organic_matter_pct", "Organic Matter (%)"),
-            ("ec_ds_m", "EC (dS/m)"),
             ("soil_temp_c", "Soil Temperature (°C)"),
             ("bulk_density_g_cm3", "Bulk Density (g/cm³)"),
-            ("microbial_biomass_mg_c_kg", "Microbial Biomass (mg C/kg)"),
-            ("soil_respiration_mg_co2_kg_day", "Respiration (mg CO₂/kg/day)"),
         ]
         field_choice = st.selectbox("Measurement", [f"{lbl} ({k})" for k, lbl in all_fields])
         value = st.number_input("Value", step=0.1, format="%.2f")

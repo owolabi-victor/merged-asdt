@@ -339,15 +339,15 @@ def dashboard():
         st.caption(f"{user['email']} — Scientist")
         st.divider()
 
+        # Scope: the deployed node instruments the physical domain only. The
+        # chemical, biological, cross-domain and 3D views had no instrument
+        # behind them and rendered nominal or interpolated values, which read as
+        # measurements. They are withdrawn rather than shown unbacked.
         view = st.radio("Navigation", [
             "Dashboard",
-            "3D Simulation",
             "Physical Segment",
-            "Chemical Segment",
-            "Biological Segment",
             "Soil Parameters",
             "Layer Observability",
-            "Cross-Domain",
             "Knowledge Graph",
             "Audit Log",
             "Profile",
@@ -372,20 +372,12 @@ def dashboard():
     # Main content
     if view == "Dashboard":
         render_integrated_view()
-    elif view == "3D Simulation":
-        render_3d_simulation(api_get, api_patch, api_post)
     elif view == "Physical Segment":
         render_physical()
-    elif view == "Chemical Segment":
-        render_chemical()
-    elif view == "Biological Segment":
-        render_biological()
     elif view == "Soil Parameters":
         render_soil_parameters()
     elif view == "Layer Observability":
         render_layers()
-    elif view == "Cross-Domain":
-        render_cross_domain()
     elif view == "Knowledge Graph":
         render_knowledge_graph()
     elif view == "Audit Log":
