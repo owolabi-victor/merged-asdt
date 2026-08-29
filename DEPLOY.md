@@ -111,18 +111,39 @@ The URL lives in NVS, so this is a re-provision, not a reflash:
 
 ## Security
 
-The ingest endpoint is unauthenticated plain HTTP. On a public IP, anyone who
-finds it can inject fabricated readings into both twins, and they will be stored
-and reasoned over exactly like real ones. Options, roughly in order of effort:
+`pod_bridge` requires a shared secret when `INGEST_TOKEN` is set. Unset, the
+endpoint is open and says so at startup — never run that on a public address.
 
-- A shared-secret header checked by `pod_bridge`, sent by the firmware. Needs a
-  reflash, and the node must be on the cable.
-- A DO firewall rule restricting port 8000 by source — awkward, because the
-  hotspot's address is dynamic.
-- Keep ingest behind the Cloudflare tunnel and expose only the dashboards.
+Generate one and pass it in:
 
-Do not skip this because it is inconvenient. An open write endpoint feeding a
-system whose whole purpose is trustworthy measurement undermines the point.
+```bash
+export INGEST_TOKEN=$(openssl rand -hex 24)
+echo "$INGEST_TOKEN"
+```
+
+The node supplies it as a query parameter, so **no reflash is needed** — the
+ingest URL lives in NVS and is set through the setup portal:
+
+```
+http://<droplet-ip>:8000/sync/upload?key=<token>
+```
+
+`X-Ingest-Key` and `Authorization: Bearer` are accepted too, for callers that
+are not the node.
+
+**The node stops working the moment you enable this**, until it is
+re-provisioned with the new URL. Expect `401` and `rejected: bad or missing
+ingest token` in the bridge log until then — that is the check working.
+
+### What this does not protect against
+
+It is a shared secret over plain HTTP. The firmware cannot do TLS — `cloud.c`
+sets `crt_bundle_attach = NULL` — so the token crosses the network in the clear
+and anyone able to observe the traffic can replay it. It stops opportunistic
+writes from strangers who find the port. It is not protection against someone
+on the path, and putting TLS on a reverse proxy would not change that while the
+node itself speaks only HTTP. Closing that properly means firmware work: attach
+the certificate bundle (already enabled in sdkconfig) and move to HTTPS.
 
 ## Verifying
 

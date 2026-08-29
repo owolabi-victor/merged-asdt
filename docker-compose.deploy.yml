@@ -40,6 +40,11 @@ services:
     ports:
       - "8000:8000"
     environment:
+      # Shared secret for the ingest endpoint. Unset, the endpoint is open and
+      # anyone who can reach port 8000 can inject readings - do not run that on
+      # a public address. The node supplies it as ?key=<token> on its ingest
+      # URL, set through the setup portal (no reflash).
+      INGEST_TOKEN: "${INGEST_TOKEN:?set INGEST_TOKEN before deploying}"
       # Local brokers, by service name. 1883 inside the network - the 2883/1883
       # split only exists because both stacks publish to the host.
       SDT_BROKER: "mosquitto"
