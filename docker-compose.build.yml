@@ -1,0 +1,48 @@
+# Build overlay for deployment (DigitalOcean).
+#
+# The base docker-compose.yml runs the three app services on a bare
+# python:3.11-slim, pip-installing unpinned packages inside `command:` on every
+# start, with the source bind-mounted from the host. That is fine on a laptop
+# and wrong on a server: it needs the repo present on disk, re-downloads
+# dependencies on every restart, and resolves whatever version PyPI serves that
+# day.
+#
+# This overlay builds real images with pinned dependencies instead. The base
+# file is unchanged, so local workflows keep working.
+#
+#   local check : docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#   on a droplet: same command
+#
+# `command: []` clears the base file's pip-install line so the image's CMD runs.
+# `volumes: []` clears the bind mounts - the code is in the image.
+
+services:
+  twin-api:
+    build:
+      context: .
+      dockerfile: docker/twin-api.Dockerfile
+    image: merged-asdt/twin-api:local
+    command: []
+    volumes: []
+
+  scientist-ui:
+    build:
+      context: .
+      dockerfile: docker/ui.Dockerfile
+      args:
+        APP_SCRIPT: ui/app_scientist.py
+        APP_PORT: "8501"
+    image: merged-asdt/scientist-ui:local
+    command: []
+    volumes: []
+
+  farmer-ui:
+    build:
+      context: .
+      dockerfile: docker/ui.Dockerfile
+      args:
+        APP_SCRIPT: ui/app_farmer.py
+        APP_PORT: "8502"
+    image: merged-asdt/farmer-ui:local
+    command: []
+    volumes: []

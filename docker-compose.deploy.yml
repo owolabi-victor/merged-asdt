@@ -1,0 +1,55 @@
+# Runtime services that until now only ever ran by hand on a laptop.
+#
+# Use together with the base file and the build overlay:
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.build.yml \
+#                  -f docker-compose.deploy.yml up -d --build
+#
+# pod-bridge is built from the firmware repo (~/sensors), which is a separate
+# checkout, so its image is built separately - see DEPLOY.md. Compose cannot
+# reach outside its own context for a build.
+
+services:
+  # Validates telemetry off MQTT and writes it to InfluxDB/Redis/Mongo.
+  # Without this the readings reach the broker and are never stored.
+  ingestor:
+    build:
+      context: .
+      dockerfile: docker/asdt-layers.Dockerfile
+    image: merged-asdt/layers:local
+    container_name: merged_asdt_ingestor
+    command: ["python", "-u", "-m", "dt_network.ingestor"]
+    environment:
+      MQTT_BROKER: "mosquitto"
+      MQTT_PORT: "1883"
+      INFLUXDB_URL: "http://influxdb:8086"
+      INFLUXDB_TOKEN: "${INFLUXDB_TOKEN:-my-super-secret-token}"
+      INFLUXDB_ORG: "asdt"
+      INFLUXDB_BUCKET: "soil_telemetry"
+      REDIS_URL: "redis://redis:6379"
+      MONGO_URI: "mongodb://admin:password@mongodb:27017"
+    depends_on: [mosquitto, influxdb, redis, mongodb]
+    restart: unless-stopped
+    networks: [dt_net]
+
+  # The ESP32's ingest endpoint. On a droplet this is what gives the node a
+  # permanent address, replacing the laptop's DHCP one.
+  pod-bridge:
+    image: asdt/pod-bridge:local
+    container_name: asdt_pod_bridge
+    ports:
+      - "8000:8000"
+    environment:
+      # Local brokers, by service name. 1883 inside the network - the 2883/1883
+      # split only exists because both stacks publish to the host.
+      SDT_BROKER: "mosquitto"
+      SDT_PORT: "1883"
+      PDT_BROKER: "${PDT_BROKER:-mosquitto}"
+      PDT_PORT: "${PDT_PORT:-1883}"
+    volumes:
+      # Cloud credentials, mounted not baked. Never commit these.
+      - ./.env.cloud:/secrets/asdt.env.cloud:ro
+      - ${AOPDT_ENV_CLOUD:-./.env.cloud}:/secrets/aopdt.env.cloud:ro
+    depends_on: [mosquitto]
+    restart: unless-stopped
+    networks: [dt_net]

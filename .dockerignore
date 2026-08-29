@@ -1,0 +1,9 @@
+.git
+.venv
+__pycache__
+*.pyc
+.DS_Store
+data/captures
+docs
+.env
+.env.cloud
