@@ -13,7 +13,7 @@ import time
 from shared.influx_io import write_point
 from shared.mongo_io  import log_event, upsert_asset_metadata
 from shared.redis_io  import set_latest, set_state
-from shared.config    import SENSOR_FIELDS, ASSET_ID
+from shared.config    import SENSOR_FIELDS, FORCING_FIELDS, ASSET_ID
 
 
 def route_telemetry(data: dict):
@@ -21,10 +21,12 @@ def route_telemetry(data: dict):
     Called once per validated MQTT message.
     Routes each field to the appropriate storage backend.
     """
-    # 1. Extract only the declared sensor fields (ignore simulator metadata)
+    # 1. Extract the declared sensor fields, plus the atmospheric forcing the
+    #    evaporation model needs. Simulator metadata is ignored either way.
+    stored = set(SENSOR_FIELDS) | set(FORCING_FIELDS)
     fields = {
         k: v for k, v in data.items()
-        if k in SENSOR_FIELDS and v is not None
+        if k in stored and v is not None
     }
 
     # 2. Write all numeric sensor values to InfluxDB time-series

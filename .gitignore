@@ -56,7 +56,10 @@ logs/
 # Data files
 *.csv
 *.json
-data/
+data/*
+!data/captures/
+!data/captures/*.csv
+!data/captures/*.md
 
 # OS
 Thumbs.db
@@ -64,3 +67,8 @@ Thumbs.db
 
 # Cloud credentials — every managed-service secret lives here
 .env.cloud
+
+# Captured telemetry is deliberately tracked. data/ and *.csv are ignored above
+# because the simulator writes bulk output there, but data/captures/ holds
+# hand-exported records of the instrumented node running - irreplaceable once
+# the cloud buckets expire, and small enough to version.

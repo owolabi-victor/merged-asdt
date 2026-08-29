@@ -75,8 +75,6 @@ st.markdown("""
 
     /* Section headers */
     .section-physical { border-left: 4px solid #3b82f6; padding-left: 12px; }
-    .section-chemical { border-left: 4px solid #f59e0b; padding-left: 12px; }
-    .section-biological { border-left: 4px solid #10b981; padding-left: 12px; }
 
     div[data-testid="stMetric"] {
         background: #111827;
@@ -290,41 +288,6 @@ def time_series_chart(field, minutes=60):
         margin=dict(l=40, r=20, t=40, b=30),
     )
     fig.update_traces(line_color="#4ecdc4")
-    st.plotly_chart(fig, use_container_width=True)
-
-
-# ── Radar Chart for Nutrients ───────────────────────────────────────────────
-
-def nutrient_radar(sensors):
-    fields = ["nitrogen_ppm", "phosphorus_ppm", "potassium_ppm", "soil_ph", "organic_matter_pct", "ec_ds_m"]
-    labels = ["N (ppm)", "P (mg/kg)", "K (mg/kg)", "pH", "OM (%)", "EC (dS/m)"]
-
-    values = []
-    for f in fields:
-        s = sensors.get(f, {})
-        val = s.get("value")
-        hmin = s.get("healthy_min", 1)
-        hmax = s.get("healthy_max", 100)
-        if val is not None and hmax and hmin:
-            mid = (hmin + hmax) / 2
-            norm = min(val / mid * 100, 150) if mid > 0 else 50
-        else:
-            norm = 0
-        values.append(round(norm, 1))
-
-    values.append(values[0])  # close the polygon
-    labels.append(labels[0])
-
-    fig = go.Figure(go.Scatterpolar(r=values, theta=labels, fill="toself",
-                                      fillcolor="rgba(78,205,196,0.2)",
-                                      line={"color": "#4ecdc4"}))
-    fig.update_layout(
-        polar={"radialaxis": {"visible": True, "range": [0, 150], "gridcolor": "#1f2937"},
-               "bgcolor": "rgba(17,24,39,0.8)", "angularaxis": {"gridcolor": "#1f2937"}},
-        showlegend=False, height=350,
-        paper_bgcolor="rgba(0,0,0,0)", font={"color": "#9ca3af"},
-        margin=dict(l=60, r=60, t=30, b=30),
-    )
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -587,6 +550,86 @@ def render_physical():
     for field in physical_fields:
         time_series_chart(field, minutes)
 
+    # ── Measured soil evaporation ────────────────────────────────────────────
+    # The only figure on this page derived from two sensors at once, and the
+    # only one that is a measurement rather than a model output.
+    st.divider()
+    st.subheader("Soil Evaporation (measured)")
+    st.caption("Drawdown of the probe between wetting events is the evaporation. "
+               "The DHT11 supplies the vapour pressure deficit that drove it.")
+
+    col_e1, col_e2 = st.columns([3, 1])
+    with col_e2:
+        ev_hours = st.selectbox("Window (hours)", [24, 48, 72, 168], index=1,
+                                key="evap_hours")
+    ev = api_get(f"/physical/soil_evaporation?hours={ev_hours}")
+
+    if not ev or ev.get("status") == "no_data":
+        st.info("No soil moisture history yet — evaporation needs at least two "
+                "readings separated in time.")
+    elif ev.get("status") == "insufficient":
+        st.info("History exists but shows no drying yet. Evaporation appears "
+                "once the probe starts falling between readings.")
+    else:
+        summ = ev["summary"]
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Mean rate", f"{summ['mean_rate_mm_per_day']} mm/day"
+                  if summ["mean_rate_mm_per_day"] is not None else "—")
+        m2.metric("Total lost", f"{summ['total_evaporation_mm']} mm")
+        m3.metric("Depletion", f"{summ['current_depletion_mm']} / {ev['tew_mm']} mm")
+        m4.metric("Drying stage", f"Stage {summ['current_stage']}",
+                  help="1 = energy-limited (tracks the air). "
+                       "2 = supply-limited (surface has dried out).")
+
+        if not ev.get("forcing_available"):
+            st.warning("No air temperature / humidity history — evaporation is "
+                       "measured, but nothing explains it. Check the DHT11.")
+
+        df_ev = pd.DataFrame(ev["buckets"])
+        if not df_ev.empty:
+            import plotly.graph_objects as go
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=df_ev["time"], y=df_ev["evaporation_mm"],
+                name="Evaporation (mm)", marker_color="#0ea5e9",
+            ))
+            if ev.get("forcing_available"):
+                fig.add_trace(go.Scatter(
+                    x=df_ev["time"], y=df_ev["vpd_kpa"],
+                    name="VPD (kPa)", yaxis="y2", mode="lines",
+                    line=dict(color="#f59e0b", width=2),
+                ))
+                fig.update_layout(yaxis2=dict(title="VPD (kPa)", overlaying="y",
+                                              side="right", showgrid=False))
+            fig.update_layout(height=300, margin=dict(l=10, r=10, t=30, b=10),
+                              yaxis_title="Evaporation (mm)",
+                              legend=dict(orientation="h", y=1.15))
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Stage separation — the result two sensors give that one cannot.
+        dr = api_get(f"/physical/drying_response?hours={max(ev_hours, 72)}")
+        if dr and dr.get("status") == "ok":
+            s1 = dr["stages"].get("stage_1", {})
+            s2 = dr["stages"].get("stage_2", {})
+            c1, c2 = st.columns(2)
+            for col, label, st_data in ((c1, "Stage 1 — energy-limited", s1),
+                                        (c2, "Stage 2 — supply-limited", s2)):
+                with col:
+                    if st_data.get("status") == "ok":
+                        col.metric(label,
+                                   f"{st_data['slope_mm_per_kpa']} mm/kPa",
+                                   help=f"r² = {st_data['r_squared']}, "
+                                        f"n = {st_data['n']} buckets")
+                    else:
+                        col.metric(label, "—",
+                                   help=f"status: {st_data.get('status', 'unknown')}")
+            if dr.get("transition_observed"):
+                st.success(dr["interpretation"])
+            else:
+                st.info(dr["interpretation"])
+        elif dr and dr.get("status") == "no_forcing":
+            st.caption("Stage separation needs air temperature and humidity.")
+
     # ── Water balance forecast chart ─────────────────────────────────────────
     st.divider()
     st.subheader("Water Balance Forecast (FAO-56)")
@@ -771,130 +814,6 @@ def render_physical():
                         st.error(str(result))
 
 
-# ── Chemical Segment ────────────────────────────────────────────────────────
-
-def render_chemical():
-    st.markdown('<h2 class="section-chemical">Chemical Segment</h2>', unsafe_allow_html=True)
-    st.caption("pH, Nitrogen, Phosphorus, Potassium, EC, Organic Matter")
-
-    summary = api_get("/ui/scientist/summary")
-    if not summary:
-        return
-
-    sensors = summary.get("sensors", {})
-    chemical_fields = ["soil_ph", "nitrogen_ppm", "phosphorus_ppm", "potassium_ppm", "ec_ds_m", "organic_matter_pct"]
-
-    # Current values
-    cols = st.columns(3)
-    for i, field in enumerate(chemical_fields):
-        with cols[i % 3]:
-            info = sensors.get(field, {})
-            val = info.get("value")
-            unit = info.get("unit", "")
-            status = info.get("status", "no_data")
-            st.metric(
-                field.replace("_", " ").title(),
-                f"{val:.2f} {unit}" if val is not None else "—",
-            )
-            st.markdown(status_badge(status), unsafe_allow_html=True)
-
-    st.divider()
-
-    # Nutrient radar
-    st.subheader("Nutrient Balance (Radar)")
-    nutrient_radar(sensors)
-
-    # Chemical depletion states
-    depletion = summary.get("depletion_states", {})
-    chem_states = {k: v for k, v in depletion.items() if k in ("S1", "S2", "S3", "S6")}
-    if chem_states:
-        st.warning(f"Active Chemical Depletion: {', '.join(chem_states.keys())}")
-        for code, info in chem_states.items():
-            st.write(f"**{code} — {info.get('name', '')}**")
-
-    # Time series
-    st.subheader("Time Series")
-    minutes = st.slider("Time range (minutes)", 10, 360, 60, key="chem_minutes")
-    c1, c2 = st.columns(2)
-    for i, field in enumerate(chemical_fields):
-        with c1 if i % 2 == 0 else c2:
-            time_series_chart(field, minutes)
-
-    # Override controls
-    st.divider()
-    st.subheader("Manual Override / Simulate Intervention")
-    with st.form("chemical_override"):
-        field = st.selectbox("Parameter", chemical_fields)
-        value = st.number_input("New Value", step=0.1)
-        reason = st.text_input("Reason (e.g., 'Applied 100 kg/ha CAN')")
-        if st.form_submit_button("Apply Override"):
-            result = api_post("/ui/scientist/override", {"field": field, "value": value, "reason": reason})
-            if result and "error" not in result:
-                st.success(f"Override applied: {field} = {value}")
-            else:
-                st.error(str(result))
-
-
-# ── Biological Segment ──────────────────────────────────────────────────────
-
-def render_biological():
-    st.markdown('<h2 class="section-biological">Biological Segment</h2>', unsafe_allow_html=True)
-    st.caption("Microbial Biomass, Soil Respiration")
-
-    summary = api_get("/ui/scientist/summary")
-    if not summary:
-        return
-
-    sensors = summary.get("sensors", {})
-    bio_fields = ["microbial_biomass_mg_c_kg", "soil_respiration_mg_co2_kg_day"]
-
-    c1, c2 = st.columns(2)
-    for i, field in enumerate(bio_fields):
-        with c1 if i == 0 else c2:
-            info = sensors.get(field, {})
-            val = info.get("value")
-            unit = info.get("unit", "")
-            status = info.get("status", "no_data")
-            st.metric(
-                field.replace("_", " ").title(),
-                f"{val:.1f} {unit}" if val is not None else "—",
-            )
-            st.markdown(status_badge(status), unsafe_allow_html=True)
-
-    # Biological activity index
-    mb = sensors.get("microbial_biomass_mg_c_kg", {}).get("value")
-    resp = sensors.get("soil_respiration_mg_co2_kg_day", {}).get("value")
-    if mb is not None and resp is not None:
-        activity_index = min((mb / 300 + resp / 50) / 2 * 100, 100)
-        st.metric("Biological Activity Index", f"{activity_index:.0f}/100")
-        st.progress(activity_index / 100)
-
-    # Depletion
-    depletion = summary.get("depletion_states", {})
-    if "S7" in depletion:
-        st.error("S7 — Biologically Inactive detected")
-
-    # Time series
-    st.subheader("Time Series")
-    minutes = st.slider("Time range (minutes)", 10, 360, 60, key="bio_minutes")
-    for field in bio_fields:
-        time_series_chart(field, minutes)
-
-    # Override
-    st.divider()
-    st.subheader("Simulate Organic Amendment")
-    with st.form("bio_override"):
-        field = st.selectbox("Parameter", bio_fields)
-        value = st.number_input("New Value", step=1.0)
-        reason = st.text_input("Reason")
-        if st.form_submit_button("Apply Override"):
-            result = api_post("/ui/scientist/override", {"field": field, "value": value, "reason": reason})
-            if result and "error" not in result:
-                st.success(f"Override applied: {field} = {value}")
-            else:
-                st.error(str(result))
-
-
 # ── Soil Parameters ─────────────────────────────────────────────────────────
 
 _PARAM_META = {
@@ -902,14 +821,6 @@ _PARAM_META = {
     "soil_moisture_pct":              ("Soil Moisture",             "Physical"),
     "bulk_density_g_cm3":             ("Bulk Density",              "Physical"),
     "soil_temp_c":                    ("Soil Temperature",          "Physical"),
-    "soil_ph":                        ("Soil pH",                   "Chemical"),
-    "nitrogen_ppm":                   ("Nitrogen",                  "Chemical"),
-    "phosphorus_ppm":                 ("Phosphorus",                "Chemical"),
-    "potassium_ppm":                  ("Potassium",                 "Chemical"),
-    "ec_ds_m":                        ("Electrical Conductivity",   "Chemical"),
-    "organic_matter_pct":             ("Organic Matter",            "Chemical"),
-    "microbial_biomass_mg_c_kg":      ("Microbial Biomass",         "Biological"),
-    "soil_respiration_mg_co2_kg_day": ("Soil Respiration",          "Biological"),
 }
 
 def render_soil_parameters():

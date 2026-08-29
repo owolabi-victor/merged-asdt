@@ -74,15 +74,7 @@ def build_thing_template() -> dict:
                 "bulk_density_g_cm3": 0.0,
                 "soil_temp_c": 0.0,
                 # Chemical
-                "soil_ph": 0.0,
-                "nitrogen_ppm": 0.0,
-                "phosphorus_ppm": 0.0,
-                "potassium_ppm": 0.0,
-                "ec_ds_m": 0.0,
-                "organic_matter_pct": 0.0,
                 # Biological
-                "microbial_biomass_mg_c_kg": 0.0,
-                "soil_respiration_mg_co2_kg_day": 0.0,
             }},
             "texture": {"properties": {
                 "sand_pct": 0.0,

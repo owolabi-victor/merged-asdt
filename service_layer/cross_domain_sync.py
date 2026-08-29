@@ -89,23 +89,15 @@ class CrossDomainSynchronizer:
         Publish soil state data that the Plant DT needs:
         - Soil moisture (VWC, field capacity proxy)
         - Soil nutrient availability (N, P, K)
-        - Soil pH (affects nutrient availability to plants)
         - Soil temperature (affects root growth)
         - Bulk density (affects root penetration)
-        - EC / salinity (affects plant salt stress)
         - Current depletion state
         """
         # Gather current values
         payload_fields = {
-            "N_available_ppm":   get_latest("nitrogen_ppm"),
-            "P_available_ppm":   get_latest("phosphorus_ppm"),
-            "K_available_ppm":   get_latest("potassium_ppm"),
             "VWC_percent":       get_latest("soil_moisture_pct"),
-            "pH":                get_latest("soil_ph"),
-            "EC_dS_m":           get_latest("ec_ds_m"),
             "soil_temperature_c":get_latest("soil_temp_c"),
             "bulk_density_g_cm3":get_latest("bulk_density_g_cm3"),
-            "organic_matter_pct":get_latest("organic_matter_pct"),
         }
         # Remove None values
         payload = {k: round(v, 3) for k, v in payload_fields.items() if v is not None}
@@ -165,11 +157,7 @@ class CrossDomainSynchronizer:
         - Moisture (affects aerobic/anaerobic conditions)
         """
         payload_fields = {
-            "organic_matter_pct":             get_latest("organic_matter_pct"),
-            "microbial_biomass_mg_c_kg":      get_latest("microbial_biomass_mg_c_kg"),
-            "soil_respiration_mg_co2_kg_day": get_latest("soil_respiration_mg_co2_kg_day"),
             "soil_temperature_c":             get_latest("soil_temp_c"),
-            "pH":                             get_latest("soil_ph"),
             "VWC_percent":                    get_latest("soil_moisture_pct"),
         }
         payload = {k: round(v, 3) for k, v in payload_fields.items() if v is not None}
@@ -283,13 +271,11 @@ class CrossDomainSynchronizer:
         """
         React to plant-driven triggers:
         1. If plant water demand > available soil water → irrigation alert
-        2. If crop at reproductive stage AND N low → prioritise N application
 
         Uses rooting_depth_cm from Plant DT (falls back to 30 cm) to compute
         the root-zone available water column rather than a fixed 30 cm depth.
         """
-        demand    = self._plant_demand.get("plant_water_demand_mm_day")
-        phenology = self._plant_demand.get("crop_phenology_stage", "")
+        demand = self._plant_demand.get("plant_water_demand_mm_day")
 
         # Use rooting depth from Plant DT when available, default 30 cm
         rooting_depth_cm = self._plant_demand.get("rooting_depth_cm")
@@ -315,19 +301,6 @@ class CrossDomainSynchronizer:
                     print(f"[CROSS-DOMAIN] ⚠️  Plant demand ({demand} mm/day) approaching "
                           f"available soil water ({available_mm:.0f} mm, depth={depth_m*100:.0f} cm). "
                           f"Irrigation may be needed.")
-
-        # Trigger 2: High nutrient demand during reproductive stage
-        if phenology and phenology.upper().startswith("R"):
-            n_val = get_latest("nitrogen_ppm")
-            n_threshold = 15.0  # healthy minimum
-            if n_val is not None and n_val < n_threshold:
-                log_event("cross_domain_phenology_trigger", {
-                    "phenology_stage": phenology,
-                    "nitrogen_ppm":    round(n_val, 1),
-                    "action": "Prioritise N application — crop at reproductive stage",
-                }, severity="warning")
-                print(f"[CROSS-DOMAIN] ⚠️  Crop at {phenology} (high demand) but N={n_val:.1f} ppm. "
-                      f"Prioritise nitrogen application.")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Main run loop

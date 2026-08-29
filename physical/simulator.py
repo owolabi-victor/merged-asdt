@@ -29,54 +29,22 @@ NOMINAL_BY_TYPE = {
     "loamy": {
         "soil_moisture_pct":              30.0,
         "soil_temp_c":                    24.5,
-        "soil_ph":                         6.2,
-        "nitrogen_ppm":                   20.0,
-        "phosphorus_ppm":                 18.0,
-        "potassium_ppm":                 180.0,
-        "ec_ds_m":                         0.8,
         "bulk_density_g_cm3":              1.30,
-        "organic_matter_pct":              3.0,
-        "microbial_biomass_mg_c_kg":     420.0,
-        "soil_respiration_mg_co2_kg_day": 85.0,
     },
     "sandy": {
         "soil_moisture_pct":              18.0,
         "soil_temp_c":                    26.0,
-        "soil_ph":                         5.8,
-        "nitrogen_ppm":                   12.0,
-        "phosphorus_ppm":                 10.0,
-        "potassium_ppm":                 110.0,
-        "ec_ds_m":                         0.5,
         "bulk_density_g_cm3":              1.50,
-        "organic_matter_pct":              1.5,
-        "microbial_biomass_mg_c_kg":     250.0,
-        "soil_respiration_mg_co2_kg_day": 45.0,
     },
     "clay": {
         "soil_moisture_pct":              38.0,
         "soil_temp_c":                    23.0,
-        "soil_ph":                         6.5,
-        "nitrogen_ppm":                   22.0,
-        "phosphorus_ppm":                 20.0,
-        "potassium_ppm":                 200.0,
-        "ec_ds_m":                         1.0,
         "bulk_density_g_cm3":              1.25,
-        "organic_matter_pct":              3.5,
-        "microbial_biomass_mg_c_kg":     480.0,
-        "soil_respiration_mg_co2_kg_day":100.0,
     },
     "silty": {
         "soil_moisture_pct":              28.0,
         "soil_temp_c":                    24.0,
-        "soil_ph":                         6.0,
-        "nitrogen_ppm":                   16.0,
-        "phosphorus_ppm":                 14.0,
-        "potassium_ppm":                 140.0,
-        "ec_ds_m":                         0.7,
         "bulk_density_g_cm3":              1.35,
-        "organic_matter_pct":              2.5,
-        "microbial_biomass_mg_c_kg":     350.0,
-        "soil_respiration_mg_co2_kg_day": 70.0,
     },
 }
 
@@ -84,15 +52,7 @@ NOMINAL_BY_TYPE = {
 NOISE = {
     "soil_moisture_pct":              0.5,
     "soil_temp_c":                    0.2,
-    "soil_ph":                        0.03,
-    "nitrogen_ppm":                   0.5,
-    "phosphorus_ppm":                 0.4,
-    "potassium_ppm":                  3.0,
-    "ec_ds_m":                        0.02,
     "bulk_density_g_cm3":             0.008,
-    "organic_matter_pct":             0.03,
-    "microbial_biomass_mg_c_kg":      5.0,
-    "soil_respiration_mg_co2_kg_day": 2.0,
 }
 
 # ── Fault profile: multi-factor soil depletion scenario ──────────────────────
@@ -100,15 +60,7 @@ NOISE = {
 #   → N depleted (S1), pH acidified (S2), compacted (S4),
 #   → OM depleted (S6), biologically inactive (S7) → overall S8
 FAULT_OVERRIDES = {
-    "nitrogen_ppm":                    7.0,    # depleted — below 10 ppm warn
-    "phosphorus_ppm":                  6.5,    # borderline depleted
-    "potassium_ppm":                  85.0,    # borderline depleted
-    "soil_ph":                         4.8,    # acidified — below 5.0 warn
     "bulk_density_g_cm3":              1.65,   # compacted — above 1.6 warn
-    "organic_matter_pct":              1.2,    # depleted — below 1.5 warn
-    "microbial_biomass_mg_c_kg":     120.0,    # inactive — below 150 warn
-    "soil_respiration_mg_co2_kg_day": 18.0,    # inactive — below 25 warn
-    "ec_ds_m":                         0.9,    # normal (not salinized)
     "soil_moisture_pct":              28.0,    # adequate (not water stressed)
 }
 
@@ -226,7 +178,7 @@ def main():
               f"moisture={PHYSICAL_FAULT_OVERRIDES['soil_moisture_pct']}%  (chemical/bio healthy)")
     else:
         print(f"[SIMULATOR] fault_mode=True → multi-factor depletion scenario active")
-        print(f"[SIMULATOR]   N depleted, pH acidified, compacted, OM depleted, biologically inactive")
+        print(f"[SIMULATOR]   compacted, water-stressed")
 
     while True:
         set_latest("layer_heartbeat_physical.simulator",
@@ -237,14 +189,8 @@ def main():
         bd  = payload.get("bulk_density_g_cm3", "?")
         mst = payload.get("soil_moisture_pct", "?")
         tag = " [SPIKE]" if payload.get("spike_injected") else ""
-        if fault_mode_physical:
-            print(f"  BD={bd} g/cm³ | moisture={mst}%{tag}")
-        else:
-            n   = payload.get("nitrogen_ppm", "?")
-            ph  = payload.get("soil_ph", "?")
-            om  = payload.get("organic_matter_pct", "?")
-            mb  = payload.get("microbial_biomass_mg_c_kg", "?")
-            print(f"  N={n} ppm | pH={ph} | OM={om}% | MB={mb} mgC/kg | BD={bd} g/cm³ | mst={mst}%{tag}")
+        tmp = payload.get("soil_temp_c", "?")
+        print(f"  BD={bd} g/cm³ | moisture={mst}% | temp={tmp}°C{tag}")
 
         time.sleep(30)
 

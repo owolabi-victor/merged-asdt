@@ -49,9 +49,6 @@ def first_time_setup():
         "depletion_sensitivity": texture.get("depletion_sensitivity", "moderate"),
         "sensor_fields": [
             "soil_moisture_pct", "bulk_density_g_cm3", "soil_temp_c",
-            "soil_ph", "nitrogen_ppm", "phosphorus_ppm", "potassium_ppm",
-            "ec_ds_m", "organic_matter_pct",
-            "microbial_biomass_mg_c_kg", "soil_respiration_mg_co2_kg_day",
         ],
     })
 

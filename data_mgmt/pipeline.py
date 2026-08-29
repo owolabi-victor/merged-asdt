@@ -82,7 +82,7 @@ class SoilDataPipeline:
         Uses the effective thresholds passed in (scientist overrides applied).
         """
         monitored = [f for f in thresholds if f not in
-                     ("soil_moisture_pct_high", "soil_ph_high")]
+                     ("soil_moisture_pct_high",)]
         if not monitored:
             return 100.0
         share = 100.0 / len(monitored)

@@ -70,39 +70,10 @@ class SoilParcelController:
 
         # Read all sensor values
         values = {}
-        for field in ["nitrogen_ppm", "phosphorus_ppm", "potassium_ppm",
-                       "soil_ph", "ec_ds_m", "bulk_density_g_cm3",
-                       "soil_moisture_pct", "organic_matter_pct",
-                       "microbial_biomass_mg_c_kg", "soil_respiration_mg_co2_kg_day"]:
+        for field in ["bulk_density_g_cm3", "soil_moisture_pct", "soil_temp_c"]:
             val = get_latest(field)
             if val is not None:
                 values[field] = val
-
-        # S1: Nutrient Depleted — N, P, or K below threshold
-        nutrient_triggers = []
-        for field in ["nitrogen_ppm", "phosphorus_ppm", "potassium_ppm"]:
-            val = values.get(field)
-            t   = thresholds.get(field)
-            if val is not None and t is not None and val < t["warn"]:
-                nutrient_triggers.append({"field": field, "value": val, "threshold": t["warn"]})
-        if nutrient_triggers:
-            active["S1"] = {"name": "Nutrient Depleted", "triggers": nutrient_triggers}
-
-        # S2: Acidified — pH below threshold
-        ph_val = values.get("soil_ph")
-        ph_t   = thresholds.get("soil_ph")
-        if ph_val is not None and ph_t is not None and ph_val < ph_t["warn"]:
-            active["S2"] = {"name": "Acidified", "triggers": [
-                {"field": "soil_ph", "value": ph_val, "threshold": ph_t["warn"]}
-            ]}
-
-        # S3: Salinized — EC above threshold
-        ec_val = values.get("ec_ds_m")
-        ec_t   = thresholds.get("ec_ds_m")
-        if ec_val is not None and ec_t is not None and ec_val > ec_t["warn"]:
-            active["S3"] = {"name": "Salinized", "triggers": [
-                {"field": "ec_ds_m", "value": ec_val, "threshold": ec_t["warn"]}
-            ]}
 
         # S4: Compacted — bulk density above threshold
         bd_val = values.get("bulk_density_g_cm3")
@@ -142,29 +113,6 @@ class SoilParcelController:
         elif not water_triggers:
             pass  # S5 not active
 
-        # S6: Organic Matter Depleted
-        om_val = values.get("organic_matter_pct")
-        om_t   = thresholds.get("organic_matter_pct")
-        if om_val is not None and om_t is not None and om_val < om_t["warn"]:
-            active["S6"] = {"name": "Organic Matter Depleted", "triggers": [
-                {"field": "organic_matter_pct", "value": om_val, "threshold": om_t["warn"]}
-            ]}
-
-        # S7: Biologically Inactive — microbial biomass or respiration too low
-        bio_triggers = []
-        mb_val = values.get("microbial_biomass_mg_c_kg")
-        mb_t   = thresholds.get("microbial_biomass_mg_c_kg")
-        if mb_val is not None and mb_t is not None and mb_val < mb_t["warn"]:
-            bio_triggers.append({"field": "microbial_biomass_mg_c_kg",
-                                  "value": mb_val, "threshold": mb_t["warn"]})
-        resp_val = values.get("soil_respiration_mg_co2_kg_day")
-        resp_t   = thresholds.get("soil_respiration_mg_co2_kg_day")
-        if resp_val is not None and resp_t is not None and resp_val < resp_t["warn"]:
-            bio_triggers.append({"field": "soil_respiration_mg_co2_kg_day",
-                                  "value": resp_val, "threshold": resp_t["warn"]})
-        if bio_triggers:
-            active["S7"] = {"name": "Biologically Inactive", "triggers": bio_triggers}
-
         # S8: Multi-Factor Depleted — 2+ single-factor states active
         single_states = {k for k in active if k != "S8"}
         if len(single_states) >= 2:
@@ -188,7 +136,7 @@ class SoilParcelController:
         alerts = []
         for code, info in depletion.items():
             severity = "critical" if code == "S8" else "warning"
-            if code in ("S1", "S2", "S3", "S4", "S5", "S6", "S7"):
+            if code in ("S4", "S5"):
                 for trig in info.get("triggers", []):
                     field = trig.get("field", "unknown")
                     value = trig.get("value", 0)
@@ -284,20 +232,8 @@ class SoilParcelController:
         field = trigger.get("field", "")
         value = trigger.get("value", 0)
         messages = {
-            "S1": {
-                "nitrogen_ppm":    f"Nitrogen depleted: {value:.1f} ppm (threshold: {trigger.get('threshold', 0):.0f} ppm). Apply N fertiliser.",
-                "phosphorus_ppm":  f"Phosphorus depleted: {value:.1f} mg/kg (threshold: {trigger.get('threshold', 0):.0f} mg/kg). Apply P fertiliser.",
-                "potassium_ppm":   f"Potassium depleted: {value:.0f} mg/kg (threshold: {trigger.get('threshold', 0):.0f} mg/kg). Apply K fertiliser.",
-            },
-            "S2": {"soil_ph":                         f"Soil acidified: pH {value:.2f} (threshold: {trigger.get('threshold', 0):.1f}). Apply lime."},
-            "S3": {"ec_ds_m":                         f"Soil salinized: EC {value:.2f} dS/m (threshold: {trigger.get('threshold', 0):.1f} dS/m). Leaching required."},
             "S4": {"bulk_density_g_cm3":              f"Soil compacted: BD {value:.2f} g/cm³ (threshold: {trigger.get('threshold', 0):.2f} g/cm³). Deep ripping needed."},
             "S5": {"soil_moisture_pct":                f"Water stress: moisture {value:.1f}% ({trigger.get('stress_type', 'stressed')}). {'Irrigate.' if trigger.get('stress_type') == 'dry' else 'Improve drainage.'}"},
-            "S6": {"organic_matter_pct":               f"Organic matter depleted: {value:.2f}% (threshold: {trigger.get('threshold', 0):.1f}%). Add compost or cover crops."},
-            "S7": {
-                "microbial_biomass_mg_c_kg":           f"Microbial biomass low: {value:.0f} mg C/kg (threshold: {trigger.get('threshold', 0):.0f}). Add organic matter.",
-                "soil_respiration_mg_co2_kg_day":      f"Soil respiration low: {value:.1f} mg CO₂/kg/day (threshold: {trigger.get('threshold', 0):.0f}). Soil biologically inactive.",
-            },
         }
         return messages.get(code, {}).get(field, f"{code}: {field}={value:.2f} at depletion level.")
 

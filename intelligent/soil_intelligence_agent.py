@@ -48,16 +48,8 @@ AUTONOMOUS_THRESHOLD = 0.85
 
 # ── Sensor field → soil cause name mapping ────────────────────────────────────
 SENSOR_TO_CAUSE = {
-    "nitrogen_ppm":                   ("low_nitrogen",          "low"),
-    "phosphorus_ppm":                 ("low_phosphorus",        "low"),
-    "potassium_ppm":                  ("low_potassium",         "low"),
-    "soil_ph":                        ("low_ph",                "low"),
-    "ec_ds_m":                        ("high_ec",               "high"),
     "bulk_density_g_cm3":             ("high_bulk_density",     "high"),
     "soil_moisture_pct":              ("low_moisture",          "low"),
-    "organic_matter_pct":             ("low_organic_matter",    "low"),
-    "microbial_biomass_mg_c_kg":      ("low_microbial_biomass", "low"),
-    "soil_respiration_mg_co2_kg_day": ("low_respiration",       "low"),
 }
 
 
@@ -111,38 +103,6 @@ class SoilIntelligenceAgent:
         active = {}
         thresholds = self.thresholds
 
-        # S1: Nutrient Depleted (N, P, or K below threshold)
-        nutrient_issues = []
-        for field in ["nitrogen_ppm", "phosphorus_ppm", "potassium_ppm"]:
-            val = soil_data.get(field)
-            t   = thresholds.get(field)
-            if val is not None and t is not None and val < t["warn"]:
-                deficit_pct = round((1 - val / t["warn"]) * 100, 1)
-                nutrient_issues.append({
-                    "field": field, "value": round(val, 2),
-                    "threshold": t["warn"], "deficit_pct": deficit_pct,
-                    "critical": val < t["crit"],
-                })
-        if nutrient_issues:
-            active["S1"] = {"name": "Nutrient Depleted", "issues": nutrient_issues,
-                            "category": "chemical"}
-
-        # S2: Acidified
-        ph = soil_data.get("soil_ph")
-        ph_t = thresholds.get("soil_ph")
-        if ph is not None and ph_t is not None and ph < ph_t["warn"]:
-            active["S2"] = {"name": "Acidified", "value": round(ph, 2),
-                            "threshold": ph_t["warn"], "critical": ph < ph_t["crit"],
-                            "category": "chemical"}
-
-        # S3: Salinized
-        ec = soil_data.get("ec_ds_m")
-        ec_t = thresholds.get("ec_ds_m")
-        if ec is not None and ec_t is not None and ec > ec_t["warn"]:
-            active["S3"] = {"name": "Salinized", "value": round(ec, 2),
-                            "threshold": ec_t["warn"], "critical": ec > ec_t["crit"],
-                            "category": "chemical"}
-
         # S4: Compacted
         bd = soil_data.get("bulk_density_g_cm3")
         bd_t = thresholds.get("bulk_density_g_cm3")
@@ -164,30 +124,6 @@ class SoilIntelligenceAgent:
                 active["S5"] = {"name": "Water-Stressed (wet)", "value": round(mst, 1),
                                 "threshold": mst_hi["warn"], "stress_type": "waterlogged",
                                 "category": "physical"}
-
-        # S6: Organic Matter Depleted
-        om = soil_data.get("organic_matter_pct")
-        om_t = thresholds.get("organic_matter_pct")
-        if om is not None and om_t is not None and om < om_t["warn"]:
-            active["S6"] = {"name": "Organic Matter Depleted", "value": round(om, 2),
-                            "threshold": om_t["warn"], "critical": om < om_t["crit"],
-                            "category": "chemical"}
-
-        # S7: Biologically Inactive
-        bio_issues = []
-        mb = soil_data.get("microbial_biomass_mg_c_kg")
-        mb_t = thresholds.get("microbial_biomass_mg_c_kg")
-        if mb is not None and mb_t is not None and mb < mb_t["warn"]:
-            bio_issues.append({"field": "microbial_biomass_mg_c_kg",
-                                "value": round(mb, 0), "threshold": mb_t["warn"]})
-        resp = soil_data.get("soil_respiration_mg_co2_kg_day")
-        resp_t = thresholds.get("soil_respiration_mg_co2_kg_day")
-        if resp is not None and resp_t is not None and resp < resp_t["warn"]:
-            bio_issues.append({"field": "soil_respiration_mg_co2_kg_day",
-                                "value": round(resp, 1), "threshold": resp_t["warn"]})
-        if bio_issues:
-            active["S7"] = {"name": "Biologically Inactive", "issues": bio_issues,
-                            "category": "biological"}
 
         # S8: Multi-Factor Depleted
         single = {k for k in active if k != "S8"}
@@ -253,14 +189,14 @@ class SoilIntelligenceAgent:
         base  = 0.55
         scale = 0.35  # max boost from deviation
 
-        # For states with a single value (S2, S3, S4, S5, S6)
+        # For states with a single value (S4, S5)
         value = info.get("value")
         threshold = info.get("threshold")
         if value is not None and threshold is not None and threshold > 0:
             deviation = abs(value - threshold) / threshold
             return base + scale * min(1.0, deviation)
 
-        # For states with multiple issues (S1, S7)
+        # For states carrying a list of issues
         if "issues" in info:
             deviations = []
             for issue in info.get("issues", []):
@@ -342,128 +278,14 @@ class SoilIntelligenceAgent:
             code       = diag["state_code"]
             confidence = diag["confidence"]
 
-            if code == "S1":
-                recs = self._recommend_nutrients(diag, soil_data, confidence)
-                recommendations.extend(recs)
-            elif code == "S2":
-                recommendations.append(self._recommend_liming(diag, soil_data, confidence))
-            elif code == "S3":
-                recommendations.append(self._recommend_salinity(diag, soil_data, confidence))
-            elif code == "S4":
+            if code == "S4":
                 recommendations.append(self._recommend_compaction(diag, soil_data, confidence))
             elif code == "S5":
                 recommendations.append(self._recommend_water(diag, soil_data, confidence))
-            elif code == "S6":
-                recommendations.append(self._recommend_organic_matter(diag, soil_data, confidence))
-            elif code == "S7":
-                recommendations.append(self._recommend_biological(diag, soil_data, confidence))
             elif code == "S8":
                 recommendations.append(self._recommend_integrated(diag, diagnoses, confidence))
 
         return recommendations
-
-    def _recommend_nutrients(self, diag, soil_data, confidence):
-        """P1: All nutrient rates now scale with deficit severity."""
-        recs = []
-        healthy = self.healthy_ranges
-
-        for issue in diag["details"].get("issues", []):
-            field = issue["field"]
-            val   = issue["value"]
-
-            if field == "nitrogen_ppm":
-                # Target: midpoint of healthy range for this soil type
-                target = healthy.get("nitrogen_ppm", {}).get("min", 15.0)
-                deficit = max(0, target - val)
-                # Standard agronomic conversion: ppm → kg/ha for 15cm plough depth
-                n_kg   = deficit * 2.24
-                # CAN is 27% N — chemistry constant
-                can_kg = round(max(n_kg / 0.27, 50))
-                recs.append({
-                    "state": "S1", "type": "fertiliser",
-                    "product": "CAN (27% N)", "rate_kg_ha": can_kg,
-                    "timing": self._get_timing("Apply immediately", "immediate"),
-                    "method": "Broadcast evenly, avoid wet foliage",
-                    "rationale": f"Nitrogen is {val:.1f} ppm (target: ≥{target:.0f} ppm for {self.soil_type} soil). "
-                                 f"Deficit: {deficit:.1f} ppm → {can_kg} kg/ha CAN required.",
-                    "confidence": confidence,
-                    "layer": "autonomous" if confidence >= AUTONOMOUS_THRESHOLD else "intelligent",
-                })
-
-            elif field == "phosphorus_ppm":
-                # P1: Scale phosphorus rate with deficit
-                target = healthy.get("phosphorus_ppm", {}).get("min", 15.0)
-                deficit = max(0, target - val)
-                # DAP is 46% P₂O₅ ≈ 20% P; conversion: P deficit ppm × 2.24 / 0.20
-                p_kg = deficit * 2.24
-                dap_kg = round(max(p_kg / 0.20, 50))
-                recs.append({
-                    "state": "S1", "type": "fertiliser",
-                    "product": "DAP (18-46-0)", "rate_kg_ha": dap_kg,
-                    "timing": self._get_timing("Incorporate into soil at planting", "pre_planting"),
-                    "method": "Band or broadcast and incorporate",
-                    "rationale": f"Phosphorus is {val:.1f} mg/kg (target: ≥{target:.0f} mg/kg for {self.soil_type} soil). "
-                                 f"Deficit: {deficit:.1f} ppm → {dap_kg} kg/ha DAP required.",
-                    "confidence": confidence,
-                    "layer": "autonomous" if confidence >= AUTONOMOUS_THRESHOLD else "intelligent",
-                })
-
-            elif field == "potassium_ppm":
-                # P1: Scale potassium rate with deficit
-                target = healthy.get("potassium_ppm", {}).get("min", 150.0)
-                deficit = max(0, target - val)
-                # MOP is 60% K₂O ≈ 50% K; conversion: K deficit ppm × 2.24 / 0.50
-                k_kg = deficit * 2.24
-                mop_kg = round(max(k_kg / 0.50, 50))
-                recs.append({
-                    "state": "S1", "type": "fertiliser",
-                    "product": "MOP (60% K₂O)", "rate_kg_ha": mop_kg,
-                    "timing": self._get_timing("Apply and incorporate before planting", "pre_planting"),
-                    "method": "Broadcast and incorporate",
-                    "rationale": f"Potassium is {val:.0f} mg/kg (target: ≥{target:.0f} mg/kg for {self.soil_type} soil). "
-                                 f"Deficit: {deficit:.0f} ppm → {mop_kg} kg/ha MOP required.",
-                    "confidence": confidence,
-                    "layer": "autonomous" if confidence >= AUTONOMOUS_THRESHOLD else "intelligent",
-                })
-        return recs
-
-    def _recommend_liming(self, diag, soil_data, confidence):
-        """P1: Lime rate scales with pH deficit. Standard agronomic formula."""
-        ph = diag["details"].get("value", 0)
-        # Target: lower bound of healthy range for soil type
-        target_ph = self.healthy_ranges.get("soil_ph", {}).get("min", 5.5)
-        ph_deficit = max(0, target_ph - ph)
-        # Lime requirement: ~1500 kg/ha per 0.5 pH unit for loamy/silty,
-        # higher for clay (buffering), lower for sandy
-        lime_factor = {"sandy": 1000, "loamy": 1500, "clay": 2500, "silty": 1500}
-        factor = lime_factor.get(self.soil_type, 1500)
-        lime_kg = round(max(ph_deficit / 0.5 * factor, 500))
-        return {
-            "state": "S2", "type": "liming",
-            "product": "Agricultural lime (CaCO₃)", "rate_kg_ha": lime_kg,
-            "timing": self._get_timing("Apply after harvest, before next planting", "post_harvest"),
-            "method": "Incorporate to 15 cm depth using disc harrow",
-            "rationale": f"Soil pH is {ph:.2f} (target: ≥{target_ph:.1f} for {self.soil_type} soil). "
-                         f"pH deficit of {ph_deficit:.2f} units requires {lime_kg} kg/ha lime.",
-            "confidence": confidence, "layer": "intelligent",
-        }
-
-    def _recommend_salinity(self, diag, soil_data, confidence):
-        """P1: Gypsum rate scales with EC excess."""
-        ec = diag["details"].get("value", 0)
-        target_ec = self.healthy_ranges.get("ec_ds_m", {}).get("max", 1.5)
-        ec_excess = max(0, ec - target_ec)
-        # Gypsum: ~1000 kg/ha per 1.0 dS/m excess
-        gypsum_kg = round(max(ec_excess * 1000, 500))
-        return {
-            "state": "S3", "type": "salinity_management",
-            "product": "Gypsum + leaching irrigation", "rate_kg_ha": gypsum_kg,
-            "timing": self._get_timing("Apply gypsum then heavy irrigate to flush salts", "immediate"),
-            "method": "Broadcast gypsum, then apply 50–80 mm irrigation",
-            "rationale": f"EC is {ec:.2f} dS/m (target: ≤{target_ec:.1f} dS/m for {self.soil_type} soil). "
-                         f"Excess of {ec_excess:.2f} dS/m requires {gypsum_kg} kg/ha gypsum.",
-            "confidence": confidence, "layer": "intelligent",
-        }
 
     def _recommend_compaction(self, diag, soil_data, confidence):
         bd = diag["details"].get("value", 0)
@@ -498,57 +320,10 @@ class SoilIntelligenceAgent:
             "confidence": confidence, "layer": "intelligent",
         }
 
-    def _recommend_organic_matter(self, diag, soil_data, confidence):
-        """P1: Compost rate scales with OM deficit."""
-        om = diag["details"].get("value", 0)
-        target_om = self.healthy_ranges.get("organic_matter_pct", {}).get("min", 2.0)
-        om_deficit = max(0, target_om - om)
-        # Compost: ~5000 kg/ha per 0.5% OM deficit (empirical agronomic estimate)
-        compost_kg = round(max(om_deficit / 0.5 * 5000, 3000))
-        return {
-            "state": "S6", "type": "organic_amendment",
-            "product": "Compost + cover crops", "rate_kg_ha": compost_kg,
-            "timing": self._get_timing(
-                "Apply compost now, plant cover crops after harvest", "post_harvest"),
-            "method": f"Spread {compost_kg / 1000:.0f} t/ha compost, incorporate to 15 cm",
-            "rationale": f"Organic matter is {om:.2f}% (target: ≥{target_om:.1f}% for {self.soil_type} soil). "
-                         f"Deficit of {om_deficit:.2f}% requires {compost_kg} kg/ha compost.",
-            "confidence": confidence, "layer": "intelligent",
-        }
-
-    def _recommend_biological(self, diag, soil_data, confidence):
-        """P1: Compost rate scales with microbial deficit severity."""
-        # Determine severity from worst bio indicator
-        mb = soil_data.get("microbial_biomass_mg_c_kg")
-        mb_t = self.thresholds.get("microbial_biomass_mg_c_kg", {}).get("warn", 150)
-        resp = soil_data.get("soil_respiration_mg_co2_kg_day")
-        resp_t = self.thresholds.get("soil_respiration_mg_co2_kg_day", {}).get("warn", 25)
-
-        # Calculate worst deficit ratio
-        deficit_ratios = []
-        if mb is not None and mb_t > 0:
-            deficit_ratios.append(max(0, 1 - mb / mb_t))
-        if resp is not None and resp_t > 0:
-            deficit_ratios.append(max(0, 1 - resp / resp_t))
-
-        severity = max(deficit_ratios) if deficit_ratios else 0.3
-        # Base 4000 kg/ha, scales up to 12000 for severe deficit
-        compost_kg = round(max(4000 + severity * 8000, 4000))
-        return {
-            "state": "S7", "type": "biological_restoration",
-            "product": "Compost + mulch + reduced chemical inputs", "rate_kg_ha": compost_kg,
-            "timing": self._get_timing("Begin this season, continue for 2–3 seasons", "immediate"),
-            "method": "Apply compost, maintain surface mulch, reduce pesticide use",
-            "rationale": f"Microbial activity is below threshold for {self.soil_type} soil "
-                         f"({severity:.0%} depleted). Restoring biological function requires "
-                         f"{compost_kg} kg/ha sustained organic matter inputs.",
-            "confidence": confidence, "layer": "intelligent",
-        }
-
     def _recommend_integrated(self, diag, diagnoses, confidence):
         active = diag["details"].get("active_states", [])
         sequence = []
-        seq_order = {"S2": 1, "S6": 2, "S7": 2, "S4": 3, "S1": 4, "S3": 4, "S5": 5}
+        seq_order = {"S5": 1, "S4": 2}
         for code in sorted(active, key=lambda c: seq_order.get(c, 9)):
             state_info = DEPLETION_STATES.get(code, {})
             sequence.append(f"Step {len(sequence)+1}: Address {code} ({state_info.get('name', code)}) — {state_info.get('recovery', 'consult specialist')}")
@@ -557,7 +332,7 @@ class SoilIntelligenceAgent:
             "state": "S8", "type": "integrated_restoration",
             "product": "Multiple amendments (sequenced)", "rate_kg_ha": 0,
             "timing": self._get_timing(
-                "Sequence: lime → compost → deep rip → wait 2 weeks → fertilise", "post_harvest"),
+                "Sequence: irrigate → deep rip once moisture allows", "post_harvest"),
             "method": "\n".join(sequence),
             "rationale": f"Multi-factor depletion on {self.soil_type} soil: {len(active)} states active "
                          f"({', '.join(active)}). Integrated restoration required.",

@@ -29,17 +29,9 @@ class SoilTelemetryMessage(BaseModel):
     bulk_density_g_cm3:             Optional[float] = None   # g/cm³
     soil_temp_c:                    Optional[float] = None   # °C
 
-    # Chemical parameters
-    soil_ph:                        Optional[float] = None   # 0–14
-    nitrogen_ppm:                   Optional[float] = None   # ppm available N
-    phosphorus_ppm:                 Optional[float] = None   # mg/kg available P
-    potassium_ppm:                  Optional[float] = None   # mg/kg available K
-    ec_ds_m:                        Optional[float] = None   # dS/m
-    organic_matter_pct:             Optional[float] = None   # %
-
-    # Biological parameters
-    microbial_biomass_mg_c_kg:      Optional[float] = None   # mg C/kg
-    soil_respiration_mg_co2_kg_day: Optional[float] = None   # mg CO₂/kg/day
+    # Atmospheric forcing (drives evaporation; not a soil parameter)
+    air_temperature_c:              Optional[float] = None   # °C
+    relative_humidity_pct:          Optional[float] = None   # %
 
     # Texture (static per soil type, included for completeness)
     sand_pct:                       Optional[float] = None
@@ -65,11 +57,11 @@ class SoilTelemetryMessage(BaseModel):
             raise ValueError("NaN sensor value not allowed")
         return v
 
-    @field_validator("soil_ph", mode="before")
+    @field_validator("relative_humidity_pct", mode="before")
     @classmethod
-    def ph_range(cls, v):
-        if v is not None and not (0.0 <= float(v) <= 14.0):
-            raise ValueError(f"pH value {v} is outside 0–14 range")
+    def humidity_range(cls, v):
+        if v is not None and not (0.0 <= float(v) <= 100.0):
+            raise ValueError(f"Relative humidity {v}% is outside 0–100 range")
         return v
 
     @field_validator("soil_moisture_pct", mode="before")
@@ -77,13 +69,6 @@ class SoilTelemetryMessage(BaseModel):
     def moisture_range(cls, v):
         if v is not None and not (0.0 <= float(v) <= 100.0):
             raise ValueError(f"Moisture {v}% is outside 0–100 range")
-        return v
-
-    @field_validator("organic_matter_pct", mode="before")
-    @classmethod
-    def om_range(cls, v):
-        if v is not None and not (0.0 <= float(v) <= 100.0):
-            raise ValueError(f"Organic matter {v}% is outside 0–100 range")
         return v
 
 

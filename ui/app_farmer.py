@@ -671,7 +671,7 @@ def render_sensor_setup(parcel_id: str, ctx: str = "default"):
 
         with st.expander("Advanced: Field name mapping"):
             st.caption("If your sensor uses different field names, map them to our standard fields.")
-            st.text("Example: {'moisture': 'soil_moisture_pct', 'ph': 'soil_ph'}")
+            st.text("Example: {'moisture': 'soil_moisture_pct', 'temp': 'soil_temp_c'}")
             mapping_str = st.text_area(
                 "Field mapping (JSON)", value="{}", height=100,
                 help="Leave as {} if your sensor already uses our standard field names",

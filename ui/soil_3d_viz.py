@@ -17,36 +17,6 @@ NZ = 12        # grid layers  (depth resolution)
 # ── Parameter configuration ──────────────────────────────────────────────────
 # depth_fn: z goes 0 (surface) → -depth_m (bottom).  Output normalised to mean=1.
 _P = {
-    "nitrogen_ppm": {
-        "name": "Nitrogen (N)", "unit": "ppm", "cat": "Chemical",
-        "cs": "RdYlGn", "bad_low": True,
-        "depth": lambda z, d: np.exp(3.0 * z / d),
-    },
-    "phosphorus_ppm": {
-        "name": "Phosphorus (P)", "unit": "mg/kg", "cat": "Chemical",
-        "cs": "RdYlGn", "bad_low": True,
-        "depth": lambda z, d: np.exp(2.5 * z / d),
-    },
-    "potassium_ppm": {
-        "name": "Potassium (K)", "unit": "mg/kg", "cat": "Chemical",
-        "cs": "RdYlGn", "bad_low": True,
-        "depth": lambda z, d: np.exp(1.8 * z / d),
-    },
-    "soil_ph": {
-        "name": "Soil pH", "unit": "pH", "cat": "Chemical",
-        "cs": "RdYlGn", "bad_low": True,
-        "depth": lambda z, d: 1.0 + 0.06 * (z / d),
-    },
-    "organic_matter_pct": {
-        "name": "Organic Matter", "unit": "%", "cat": "Chemical",
-        "cs": "YlOrBr_r", "bad_low": True,
-        "depth": lambda z, d: np.exp(4.0 * z / d),
-    },
-    "ec_ds_m": {
-        "name": "Elect. Conductivity", "unit": "dS/m", "cat": "Chemical",
-        "cs": "RdYlGn_r", "bad_low": False,
-        "depth": lambda z, d: 1.0 - 0.2 * (z / d),
-    },
     "soil_moisture_pct": {
         "name": "Soil Moisture", "unit": "%", "cat": "Physical",
         "cs": "Blues", "bad_low": True,
@@ -61,16 +31,6 @@ _P = {
         "name": "Soil Temperature", "unit": "°C", "cat": "Physical",
         "cs": "RdBu_r", "bad_low": False,
         "depth": lambda z, d: 1.0 + 0.04 * (z / d),
-    },
-    "microbial_biomass_mg_c_kg": {
-        "name": "Microbial Biomass", "unit": "mg C/kg", "cat": "Biological",
-        "cs": "YlGn", "bad_low": True,
-        "depth": lambda z, d: np.exp(3.5 * z / d),
-    },
-    "soil_respiration_mg_co2_kg_day": {
-        "name": "Soil Respiration", "unit": "mg CO₂/kg/day", "cat": "Biological",
-        "cs": "YlGn", "bad_low": True,
-        "depth": lambda z, d: np.exp(3.0 * z / d),
     },
 }
 
@@ -430,14 +390,6 @@ _FIELD_META = {
     "soil_moisture_pct":              ("Physical", "Soil Moisture (%)",         "%",             0.0,  100.0, 0.1,   25.0),
     "bulk_density_g_cm3":             ("Physical", "Bulk Density (g/cm³)",      "g/cm³",         0.5,    2.5, 0.01,   1.2),
     "soil_temp_c":                    ("Physical", "Soil Temperature (°C)",     "°C",            0.0,   60.0, 0.1,   22.0),
-    "soil_ph":                        ("Chemical", "Soil pH", "pH", 3.0, 9.0, 0.1, 0.0),
-    "nitrogen_ppm":                   ("Chemical", "Nitrogen (ppm)",            "ppm",           0.0, 1000.0, 1.0,  100.0),
-    "phosphorus_ppm":                 ("Chemical", "Phosphorus (mg/kg)",        "mg/kg",         0.0,  500.0, 1.0,   30.0),
-    "potassium_ppm":                  ("Chemical", "Potassium (mg/kg)",         "mg/kg",         0.0, 1000.0, 1.0,  150.0),
-    "ec_ds_m":                        ("Chemical", "Elect. Conductivity (dS/m)","dS/m",          0.0,   10.0, 0.01,   0.4),
-    "organic_matter_pct":             ("Chemical", "Organic Matter (%)",        "%",             0.0,   30.0, 0.1,    2.5),
-    "microbial_biomass_mg_c_kg":      ("Biological", "Microbial Biomass (mg C/kg)","mg C/kg",     0.0, 2000.0, 1.0,  200.0),
-    "soil_respiration_mg_co2_kg_day": ("Biological", "Soil Respiration (mg CO₂/kg/day)","mg CO₂/kg/day",0.0,500.0,0.1,25.0),
 }
 
 

@@ -45,14 +45,6 @@ VALIDATION_RANGES = {
     "soil_moisture_pct": (0.0, 100.0),
     "bulk_density_g_cm3": (0.5, 3.0),
     "soil_temp_c": (-30.0, 70.0),
-    "soil_ph": (0.0, 14.0),
-    "nitrogen_ppm": (0.0, 500.0),
-    "phosphorus_ppm": (0.0, 500.0),
-    "potassium_ppm": (0.0, 2000.0),
-    "ec_ds_m": (0.0, 30.0),
-    "organic_matter_pct": (0.0, 30.0),
-    "microbial_biomass_mg_c_kg": (0.0, 5000.0),
-    "soil_respiration_mg_co2_kg_day": (0.0, 500.0),
 }
 
 
@@ -62,7 +54,7 @@ def validate_payload(payload: dict, field_mapping: dict = None) -> tuple[dict, l
     Returns (clean_data, errors).
 
     field_mapping: optional dict to translate user's field names to canonical.
-                   e.g., {"moisture": "soil_moisture_pct", "ph": "soil_ph"}
+                   e.g., {"moisture": "soil_moisture_pct", "temp": "soil_temp_c"}
     """
     if not isinstance(payload, dict):
         return {}, ["Payload is not a JSON object"]

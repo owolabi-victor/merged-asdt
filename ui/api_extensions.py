@@ -1202,6 +1202,52 @@ async def physical_water_balance(
         raise HTTPException(500, f"Water balance model error: {e}")
 
 
+@router.get("/physical/soil_evaporation")
+async def physical_soil_evaporation(
+    hours: int = Query(48, ge=6, le=336),
+    bucket_min: int = Query(60, ge=10, le=360),
+    user=Depends(require_role("scientist")),
+):
+    """
+    Soil evaporation MEASURED from the moisture probe, with the vapour pressure
+    deficit that drove it.
+
+    Not a model output: between wetting events the only way water leaves the
+    evaporation layer is upward, so the drawdown is the evaporation. Needs no
+    reference ET and no radiation sensor.
+    """
+    from simulation.evaporation import evaporation_series
+
+    try:
+        return evaporation_series(hours=hours, bucket_min=bucket_min,
+                                  soil_type=ACTIVE_SOIL_TYPE)
+    except Exception as e:
+        raise HTTPException(500, f"Evaporation model error: {e}")
+
+
+@router.get("/physical/drying_response")
+async def physical_drying_response(
+    hours: int = Query(168, ge=24, le=336),
+    bucket_min: int = Query(60, ge=10, le=360),
+    user=Depends(require_role("scientist")),
+):
+    """
+    Evaporation regressed against VPD, separately for each drying stage.
+
+    Stage 1 should show a positive slope (drying keeps up with demand); stage 2
+    should flatten (the surface can no longer supply). The separation between
+    them locates this soil's actual readily-evaporable-water limit, rather than
+    taking the FAO-56 table value on trust.
+    """
+    from simulation.evaporation import drying_response
+
+    try:
+        return drying_response(hours=hours, bucket_min=bucket_min,
+                               soil_type=ACTIVE_SOIL_TYPE)
+    except Exception as e:
+        raise HTTPException(500, f"Drying response error: {e}")
+
+
 @router.get("/physical/compaction_risk")
 async def physical_compaction_risk(
     machinery_passes: int = Query(0, ge=0, le=20),
@@ -1396,33 +1442,6 @@ def _compute_farmer_indicators_from_readings(readings: dict,
     thresholds = get_thresholds_for_soil_type(soil_type or ACTIVE_SOIL_TYPE)
     indicators = {}
 
-    # Nutrients (N, P, K)
-    n_val = readings.get("nitrogen_ppm", {}).get("value")
-    p_val = readings.get("phosphorus_ppm", {}).get("value")
-    k_val = readings.get("potassium_ppm", {}).get("value")
-    nutrient_data = [(n_val, "nitrogen_ppm"), (p_val, "phosphorus_ppm"), (k_val, "potassium_ppm")]
-    if all(v is None for v, _ in nutrient_data):
-        indicators["nutrients"] = {"status": "no_data", "label": "Nutrient Availability"}
-    else:
-        scores = []
-        for v, fname in nutrient_data:
-            if v is not None:
-                t = thresholds.get(fname, {})
-                if t and v < t.get("crit", 0):
-                    scores.append("poor")
-                elif t and v < t.get("warn", 0):
-                    scores.append("moderate")
-                else:
-                    scores.append("good")
-        if not scores:
-            indicators["nutrients"] = {"status": "no_data", "label": "Nutrient Availability"}
-        elif "poor" in scores:
-            indicators["nutrients"] = {"status": "poor", "label": "Nutrient Availability"}
-        elif "moderate" in scores:
-            indicators["nutrients"] = {"status": "moderate", "label": "Nutrient Availability"}
-        else:
-            indicators["nutrients"] = {"status": "good", "label": "Nutrient Availability"}
-
     # Moisture
     mst = readings.get("soil_moisture_pct", {}).get("value")
     if mst is None:
@@ -1436,34 +1455,6 @@ def _compute_farmer_indicators_from_readings(readings: dict,
             indicators["moisture"] = {"status": "waterlogged", "label": "Soil Moisture"}
         else:
             indicators["moisture"] = {"status": "adequate", "label": "Soil Moisture"}
-
-    # Acidity
-    ph = readings.get("soil_ph", {}).get("value")
-    if ph is None:
-        indicators["acidity"] = {"status": "no_data", "label": "Soil Acidity"}
-    else:
-        t = thresholds.get("soil_ph", {})
-        if t and ph < t.get("warn", 0):
-            indicators["acidity"] = {"status": "needs_lime", "label": "Soil Acidity"}
-        else:
-            indicators["acidity"] = {"status": "optimal", "label": "Soil Acidity"}
-
-    # Soil life
-    mb = readings.get("microbial_biomass_mg_c_kg", {}).get("value")
-    resp = readings.get("soil_respiration_mg_co2_kg_day", {}).get("value")
-    if mb is None and resp is None:
-        indicators["soil_life"] = {"status": "no_data", "label": "Soil Life"}
-    else:
-        bio_ok = True
-        if mb is not None:
-            t = thresholds.get("microbial_biomass_mg_c_kg", {})
-            if t and mb < t.get("warn", 0):
-                bio_ok = False
-        if resp is not None:
-            t = thresholds.get("soil_respiration_mg_co2_kg_day", {})
-            if t and resp < t.get("warn", 0):
-                bio_ok = False
-        indicators["soil_life"] = {"status": "active" if bio_ok else "slow", "label": "Soil Life"}
 
     return indicators
 
@@ -1513,33 +1504,6 @@ def _compute_alerts_from_readings(readings: dict,
     """
     thresholds = get_thresholds_for_soil_type(soil_type or ACTIVE_SOIL_TYPE)
     alerts = []
-
-    n_val = readings.get("nitrogen_ppm", {}).get("value")
-    p_val = readings.get("phosphorus_ppm", {}).get("value")
-    k_val = readings.get("potassium_ppm", {}).get("value")
-    if any(v is not None for v in (n_val, p_val, k_val)):
-        for v, lbl in [(n_val, "Nitrogen"), (p_val, "Phosphorus"), (k_val, "Potassium")]:
-            if v is not None:
-                fname = {"Nitrogen": "nitrogen_ppm", "Phosphorus": "phosphorus_ppm", "Potassium": "potassium_ppm"}[lbl]
-                t = thresholds.get(fname, {})
-                if t and v < t.get("crit", 0):
-                    alerts.append({"message": f"{lbl} is critically low", "severity": "critical"})
-                elif t and v < t.get("warn", 0):
-                    alerts.append({"message": f"{lbl} is low", "severity": "warning"})
-
-    ph = readings.get("soil_ph", {}).get("value")
-    if ph is not None:
-        t = thresholds.get("soil_ph", {})
-        if t and ph < t.get("crit", 0):
-            alerts.append({"message": "Your soil is critically acidic", "severity": "critical"})
-        elif t and ph < t.get("warn", 0):
-            alerts.append({"message": "Your soil is too acidic", "severity": "warning"})
-
-    om = readings.get("organic_matter_pct", {}).get("value")
-    if om is not None:
-        t = thresholds.get("organic_matter_pct", {})
-        if t and om < t.get("warn", 0):
-            alerts.append({"message": "Organic matter is low", "severity": "warning"})
 
     return alerts
 

@@ -216,9 +216,7 @@ def get_twin_state(query: str = "") -> str:
 def get_sensor_reading(field: str) -> str:
     """Returns the latest GLOBAL value of a soil sensor field (system-level, not user-specific).
     For user-specific data, use get_user_soil_data instead.
-    Valid fields: soil_moisture_pct, soil_temp_c, soil_ph, nitrogen_ppm,
-    phosphorus_ppm, potassium_ppm, ec_ds_m, bulk_density_g_cm3,
-    organic_matter_pct, microbial_biomass_mg_c_kg, soil_respiration_mg_co2_kg_day."""
+    Valid fields: soil_moisture_pct, soil_temp_c, bulk_density_g_cm3."""
     val = get_latest(field.strip())
     if val is None:
         return f"NO DATA available for '{field}'. Do not invent a value. Tell the user no data exists."

@@ -23,14 +23,6 @@ HEALTHY_READINGS = {
     "soil_moisture_pct":              28.0,
     "bulk_density_g_cm3":              1.30,
     "soil_temp_c":                    24.0,
-    "nitrogen_ppm":                   18.0,
-    "phosphorus_ppm":                 15.0,
-    "potassium_ppm":                 160.0,
-    "soil_ph":                         6.2,
-    "ec_ds_m":                         0.8,
-    "organic_matter_pct":              3.0,
-    "microbial_biomass_mg_c_kg":     400.0,
-    "soil_respiration_mg_co2_kg_day": 80.0,
 }
 
 S4_ONLY_READINGS = {
@@ -56,9 +48,6 @@ S4_S5_READINGS = {
 
 MULTI_FACTOR_READINGS = {
     **S4_ONLY_READINGS,
-    "nitrogen_ppm":        7.0,   # S1
-    "soil_ph":             4.8,   # S2
-    "organic_matter_pct":  1.2,   # S6
 }
 
 
@@ -75,29 +64,6 @@ class TestSimulatorPhysicalFaultMode:
         # BD should be near the physical fault override value
         assert abs(reading["bulk_density_g_cm3"] - PHYSICAL_FAULT_OVERRIDES["bulk_density_g_cm3"]) < 0.1
         assert abs(reading["soil_moisture_pct"] - PHYSICAL_FAULT_OVERRIDES["soil_moisture_pct"]) < 1.0
-
-    def test_physical_fault_mode_keeps_chemical_healthy(self):
-        from physical.simulator import SoilParcelSimulator, NOMINAL_BY_TYPE
-        sim = SoilParcelSimulator(soil_type="loamy", fault_mode=False,
-                                   fault_mode_physical=True)
-        nominal = NOMINAL_BY_TYPE["loamy"]
-        reading = sim.next_reading()
-        # Chemical fields should be near nominal (within 10%)
-        for field in ["nitrogen_ppm", "phosphorus_ppm", "potassium_ppm", "soil_ph"]:
-            assert abs(reading[field] - nominal[field]) < nominal[field] * 0.15, \
-                f"{field}: expected ~{nominal[field]}, got {reading[field]}"
-
-    def test_physical_fault_mode_does_not_override_full_fault(self):
-        from physical.simulator import SoilParcelSimulator, FAULT_OVERRIDES
-        # fault_mode_physical=True takes precedence — full FAULT_OVERRIDES not applied
-        sim = SoilParcelSimulator(soil_type="loamy", fault_mode=True,
-                                   fault_mode_physical=True)
-        reading = sim.next_reading()
-        # With physical mode on, nitrogen should NOT be at the depletion value 7.0
-        from physical.simulator import NOMINAL_BY_TYPE
-        nominal_n = NOMINAL_BY_TYPE["loamy"]["nitrogen_ppm"]
-        assert reading["nitrogen_ppm"] > 10.0, \
-            f"physical mode should keep N near nominal ({nominal_n}), not at depletion"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -118,14 +84,6 @@ def _make_get_asset_thresholds():
         "soil_moisture_pct_high":  {"warn": 50.0, "crit": 60.0, "low": False},
         "bulk_density_g_cm3":      {"warn": 1.60, "crit": 1.75, "low": False},
         "soil_temp_c":             {"warn": 5.0,  "crit": 2.0,  "low": True},
-        "nitrogen_ppm":            {"warn": 10.0, "crit": 5.0,  "low": True},
-        "phosphorus_ppm":          {"warn": 8.0,  "crit": 4.0,  "low": True},
-        "potassium_ppm":           {"warn": 80.0, "crit": 50.0, "low": True},
-        "soil_ph":                 {"warn": 5.0,  "crit": 4.5,  "low": True},
-        "ec_ds_m":                 {"warn": 2.0,  "crit": 4.0,  "low": False},
-        "organic_matter_pct":      {"warn": 1.5,  "crit": 0.5,  "low": True},
-        "microbial_biomass_mg_c_kg":        {"warn": 150.0, "crit": 80.0,  "low": True},
-        "soil_respiration_mg_co2_kg_day":   {"warn": 25.0,  "crit": 10.0,  "low": True},
     }
 
 
@@ -339,34 +297,6 @@ class TestPhysicalFastPath:
         # Irrigate should be the immediate action (S5 takes priority over S4)
         rec = result.get("recommendation", "")
         assert "irrigat" in rec.lower(), f"S4+S5 conflict should recommend irrigation first: {rec}"
-
-    def test_non_physical_state_blocks_fast_path(self):
-        # S1 (nutrient depletion) is present — fast path should return None
-        depletion = {
-            "S1": {"name": "Nutrient Depleted", "triggers": [
-                {"field": "nitrogen_ppm", "value": 7.0, "threshold": 10.0}
-            ]},
-            "S4": {"name": "Compacted", "triggers": [
-                {"field": "bulk_density_g_cm3", "value": 1.72, "threshold": 1.60}
-            ]},
-        }
-        readings = {**S4_ONLY_READINGS, "nitrogen_ppm": 7.0}
-        with patch("intelligent.soil_intelligence_agent.get_latest",
-                   side_effect=_make_get_latest(readings)), \
-             patch("intelligent.soil_intelligence_agent.get_latest_cached",
-                   side_effect=lambda k: (
-                       json.dumps(list(depletion.keys())) if k == "active_depletion_states"
-                       else json.dumps(depletion) if k == "depletion_detail"
-                       else None
-                   )), \
-             patch("intelligent.soil_intelligence_agent.get_asset_thresholds",
-                   return_value=_make_get_asset_thresholds()):
-            from intelligent.soil_intelligence_agent import SoilIntelligenceAgent
-            agent = SoilIntelligenceAgent(soil_type="loamy")
-            result = agent.run_physical_fast_path()
-
-        assert result is None, \
-            "Non-physical depletion state S1 should block fast path"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

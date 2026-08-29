@@ -46,16 +46,16 @@ SENSOR_FIELDS = [
     "soil_moisture_pct",                # Volumetric water content (%)
     "bulk_density_g_cm3",               # Bulk density (g/cm³)
     "soil_temp_c",                      # Soil temperature at 10 cm depth (°C)
-    # Chemical
-    "soil_ph",                          # pH (0–14)
-    "nitrogen_ppm",                     # Available nitrogen (ppm)
-    "phosphorus_ppm",                   # Available phosphorus (mg/kg)
-    "potassium_ppm",                    # Available potassium (mg/kg)
-    "ec_ds_m",                          # Electrical conductivity / salinity (dS/m)
-    "organic_matter_pct",               # Soil organic matter (%)
-    # Biological
-    "microbial_biomass_mg_c_kg",        # Microbial biomass carbon (mg C/kg)
-    "soil_respiration_mg_co2_kg_day",   # Soil respiration (mg CO₂/kg/day)
+]
+
+# Atmospheric forcing — measured by the node's DHT11, stored alongside the soil
+# parameters because soil evaporation is driven by them. Deliberately NOT in
+# SENSOR_FIELDS: thresholds, health scoring and depletion detection describe the
+# state of the soil, and air is not a soil parameter. These are inputs, not
+# things that can be "depleted".
+FORCING_FIELDS = [
+    "air_temperature_c",                # °C, DHT11
+    "relative_humidity_pct",            # %,  DHT11
 ]
 
 # Texture fields — measured once per soil type, not continuously monitored
@@ -85,57 +85,21 @@ THRESHOLDS_BY_SOIL_TYPE = {
         "soil_moisture_pct":              {"warn": 15.0,  "crit": 10.0,  "low": True},
         "soil_moisture_pct_high":         {"warn": 45.0,  "crit": 50.0,  "low": False},
         "bulk_density_g_cm3":             {"warn": 1.6,   "crit": 1.8,   "low": False},
-        "soil_ph":                        {"warn": 5.0,   "crit": 4.5,   "low": True},
-        "soil_ph_high":                   {"warn": 8.0,   "crit": 8.5,   "low": False},
-        "nitrogen_ppm":                   {"warn": 10.0,  "crit": 5.0,   "low": True},
-        "phosphorus_ppm":                 {"warn": 8.0,   "crit": 5.0,   "low": True},
-        "potassium_ppm":                  {"warn": 100.0, "crit": 70.0,  "low": True},
-        "ec_ds_m":                        {"warn": 3.0,   "crit": 4.0,   "low": False},
-        "organic_matter_pct":             {"warn": 1.5,   "crit": 1.0,   "low": True},
-        "microbial_biomass_mg_c_kg":      {"warn": 150.0, "crit": 100.0, "low": True},
-        "soil_respiration_mg_co2_kg_day": {"warn": 25.0,  "crit": 15.0,  "low": True},
     },
     "sandy": {
         "soil_moisture_pct":              {"warn": 12.0,  "crit": 8.0,   "low": True},
         "soil_moisture_pct_high":         {"warn": 40.0,  "crit": 45.0,  "low": False},
         "bulk_density_g_cm3":             {"warn": 1.7,   "crit": 1.85,  "low": False},
-        "soil_ph":                        {"warn": 5.0,   "crit": 4.5,   "low": True},
-        "soil_ph_high":                   {"warn": 8.0,   "crit": 8.5,   "low": False},
-        "nitrogen_ppm":                   {"warn": 8.0,   "crit": 4.0,   "low": True},
-        "phosphorus_ppm":                 {"warn": 6.0,   "crit": 3.0,   "low": True},
-        "potassium_ppm":                  {"warn": 80.0,  "crit": 50.0,  "low": True},
-        "ec_ds_m":                        {"warn": 2.5,   "crit": 3.5,   "low": False},
-        "organic_matter_pct":             {"warn": 1.0,   "crit": 0.5,   "low": True},
-        "microbial_biomass_mg_c_kg":      {"warn": 120.0, "crit": 80.0,  "low": True},
-        "soil_respiration_mg_co2_kg_day": {"warn": 20.0,  "crit": 12.0,  "low": True},
     },
     "clay": {
         "soil_moisture_pct":              {"warn": 18.0,  "crit": 12.0,  "low": True},
         "soil_moisture_pct_high":         {"warn": 48.0,  "crit": 55.0,  "low": False},
         "bulk_density_g_cm3":             {"warn": 1.5,   "crit": 1.7,   "low": False},
-        "soil_ph":                        {"warn": 5.0,   "crit": 4.5,   "low": True},
-        "soil_ph_high":                   {"warn": 8.0,   "crit": 8.5,   "low": False},
-        "nitrogen_ppm":                   {"warn": 12.0,  "crit": 6.0,   "low": True},
-        "phosphorus_ppm":                 {"warn": 10.0,  "crit": 6.0,   "low": True},
-        "potassium_ppm":                  {"warn": 120.0, "crit": 80.0,  "low": True},
-        "ec_ds_m":                        {"warn": 3.5,   "crit": 4.5,   "low": False},
-        "organic_matter_pct":             {"warn": 2.0,   "crit": 1.2,   "low": True},
-        "microbial_biomass_mg_c_kg":      {"warn": 180.0, "crit": 120.0, "low": True},
-        "soil_respiration_mg_co2_kg_day": {"warn": 30.0,  "crit": 18.0,  "low": True},
     },
     "silty": {
         "soil_moisture_pct":              {"warn": 14.0,  "crit": 9.0,   "low": True},
         "soil_moisture_pct_high":         {"warn": 44.0,  "crit": 50.0,  "low": False},
         "bulk_density_g_cm3":             {"warn": 1.55,  "crit": 1.75,  "low": False},
-        "soil_ph":                        {"warn": 5.0,   "crit": 4.5,   "low": True},
-        "soil_ph_high":                   {"warn": 8.0,   "crit": 8.5,   "low": False},
-        "nitrogen_ppm":                   {"warn": 9.0,   "crit": 4.5,   "low": True},
-        "phosphorus_ppm":                 {"warn": 7.0,   "crit": 4.0,   "low": True},
-        "potassium_ppm":                  {"warn": 90.0,  "crit": 60.0,  "low": True},
-        "ec_ds_m":                        {"warn": 2.8,   "crit": 3.8,   "low": False},
-        "organic_matter_pct":             {"warn": 1.3,   "crit": 0.8,   "low": True},
-        "microbial_biomass_mg_c_kg":      {"warn": 140.0, "crit": 90.0,  "low": True},
-        "soil_respiration_mg_co2_kg_day": {"warn": 22.0,  "crit": 14.0,  "low": True},
     },
 }
 
@@ -152,50 +116,18 @@ HEALTHY_RANGES_BY_SOIL_TYPE = {
     "loamy": {
         "soil_moisture_pct":              {"min": 20.0,  "max": 40.0,  "unit": "%"},
         "bulk_density_g_cm3":             {"min": 1.2,   "max": 1.4,   "unit": "g/cm³"},
-        "soil_ph":                        {"min": 5.5,   "max": 7.0,   "unit": "pH"},
-        "nitrogen_ppm":                   {"min": 15.0,  "max": 25.0,  "unit": "ppm"},
-        "phosphorus_ppm":                 {"min": 15.0,  "max": 30.0,  "unit": "mg/kg"},
-        "potassium_ppm":                  {"min": 150.0, "max": 250.0, "unit": "mg/kg"},
-        "ec_ds_m":                        {"min": 0.0,   "max": 1.5,   "unit": "dS/m"},
-        "organic_matter_pct":             {"min": 2.0,   "max": 4.0,   "unit": "%"},
-        "microbial_biomass_mg_c_kg":      {"min": 300.0, "max": 600.0, "unit": "mg C/kg"},
-        "soil_respiration_mg_co2_kg_day": {"min": 50.0,  "max": 150.0, "unit": "mg CO₂/kg/day"},
     },
     "sandy": {
         "soil_moisture_pct":              {"min": 10.0,  "max": 30.0,  "unit": "%"},
         "bulk_density_g_cm3":             {"min": 1.4,   "max": 1.6,   "unit": "g/cm³"},
-        "soil_ph":                        {"min": 5.5,   "max": 7.0,   "unit": "pH"},
-        "nitrogen_ppm":                   {"min": 10.0,  "max": 20.0,  "unit": "ppm"},
-        "phosphorus_ppm":                 {"min": 10.0,  "max": 25.0,  "unit": "mg/kg"},
-        "potassium_ppm":                  {"min": 100.0, "max": 200.0, "unit": "mg/kg"},
-        "ec_ds_m":                        {"min": 0.0,   "max": 1.2,   "unit": "dS/m"},
-        "organic_matter_pct":             {"min": 1.0,   "max": 3.0,   "unit": "%"},
-        "microbial_biomass_mg_c_kg":      {"min": 200.0, "max": 450.0, "unit": "mg C/kg"},
-        "soil_respiration_mg_co2_kg_day": {"min": 30.0,  "max": 100.0, "unit": "mg CO₂/kg/day"},
     },
     "clay": {
         "soil_moisture_pct":              {"min": 25.0,  "max": 45.0,  "unit": "%"},
         "bulk_density_g_cm3":             {"min": 1.0,   "max": 1.3,   "unit": "g/cm³"},
-        "soil_ph":                        {"min": 5.5,   "max": 7.5,   "unit": "pH"},
-        "nitrogen_ppm":                   {"min": 18.0,  "max": 30.0,  "unit": "ppm"},
-        "phosphorus_ppm":                 {"min": 15.0,  "max": 35.0,  "unit": "mg/kg"},
-        "potassium_ppm":                  {"min": 160.0, "max": 280.0, "unit": "mg/kg"},
-        "ec_ds_m":                        {"min": 0.0,   "max": 2.0,   "unit": "dS/m"},
-        "organic_matter_pct":             {"min": 2.5,   "max": 5.0,   "unit": "%"},
-        "microbial_biomass_mg_c_kg":      {"min": 350.0, "max": 700.0, "unit": "mg C/kg"},
-        "soil_respiration_mg_co2_kg_day": {"min": 60.0,  "max": 180.0, "unit": "mg CO₂/kg/day"},
     },
     "silty": {
         "soil_moisture_pct":              {"min": 18.0,  "max": 38.0,  "unit": "%"},
         "bulk_density_g_cm3":             {"min": 1.1,   "max": 1.4,   "unit": "g/cm³"},
-        "soil_ph":                        {"min": 5.5,   "max": 7.0,   "unit": "pH"},
-        "nitrogen_ppm":                   {"min": 12.0,  "max": 22.0,  "unit": "ppm"},
-        "phosphorus_ppm":                 {"min": 12.0,  "max": 28.0,  "unit": "mg/kg"},
-        "potassium_ppm":                  {"min": 120.0, "max": 220.0, "unit": "mg/kg"},
-        "ec_ds_m":                        {"min": 0.0,   "max": 1.5,   "unit": "dS/m"},
-        "organic_matter_pct":             {"min": 1.5,   "max": 3.5,   "unit": "%"},
-        "microbial_biomass_mg_c_kg":      {"min": 250.0, "max": 550.0, "unit": "mg C/kg"},
-        "soil_respiration_mg_co2_kg_day": {"min": 40.0,  "max": 130.0, "unit": "mg CO₂/kg/day"},
     },
 }
 
@@ -209,45 +141,16 @@ HEALTHY_RANGES = HEALTHY_RANGES_BY_SOIL_TYPE["loamy"]
 # crop yield and soil function. Physical/biological parameters are important
 # but have a slower impact trajectory.
 PARAMETER_WEIGHTS = {
-    "nitrogen_ppm":                   3.0,   # critical nutrient
-    "phosphorus_ppm":                 2.5,   # critical nutrient
-    "potassium_ppm":                  2.5,   # critical nutrient
-    "soil_ph":                        2.5,   # controls nutrient availability
-    "organic_matter_pct":             2.0,   # foundation of soil health
-    "ec_ds_m":                        1.5,   # salinity stress
     "soil_moisture_pct":              1.5,   # water availability
-    "microbial_biomass_mg_c_kg":      1.5,   # biological activity
-    "soil_respiration_mg_co2_kg_day": 1.5,   # biological activity
     "bulk_density_g_cm3":             1.0,   # physical compaction
     "soil_temp_c":                    0.5,   # least controllable
 }
 
-# ── Soil Depletion States (S1–S8) ────────────────────────────────────────────
+# ── Soil Depletion States (physical only) ────────────────────────────────────────────
 DEPLETION_STATES = {
     "healthy": {
         "name":       "Healthy",
         "definition": "All soil parameters within acceptable ranges",
-    },
-    "S1": {
-        "name":       "Nutrient Depleted",
-        "definition": "N, P, or K below threshold",
-        "trigger":    "N < depleted OR P < depleted OR K < depleted",
-        "recovery":   "Apply specific fertiliser (N, P, or K)",
-        "category":   "chemical",
-    },
-    "S2": {
-        "name":       "Acidified",
-        "definition": "pH too low for optimal soil function",
-        "trigger":    "pH < 5.0",
-        "recovery":   "Apply agricultural lime",
-        "category":   "chemical",
-    },
-    "S3": {
-        "name":       "Salinized",
-        "definition": "Salt accumulation affecting soil",
-        "trigger":    "EC > 3.0 dS/m",
-        "recovery":   "Leaching, gypsum application",
-        "category":   "chemical",
     },
     "S4": {
         "name":       "Compacted",
@@ -262,20 +165,6 @@ DEPLETION_STATES = {
         "trigger":    "VWC < depleted (dry) OR VWC > depleted (wet)",
         "recovery":   "Irrigation (dry) or drainage (wet)",
         "category":   "physical",
-    },
-    "S6": {
-        "name":       "Organic Matter Depleted",
-        "definition": "Soil organic carbon below threshold",
-        "trigger":    "OM < depleted threshold",
-        "recovery":   "Organic amendments, cover crops",
-        "category":   "chemical",
-    },
-    "S7": {
-        "name":       "Biologically Inactive",
-        "definition": "Microbial activity too low",
-        "trigger":    "MB < depleted OR Resp < depleted",
-        "recovery":   "Organic matter addition, reduced tillage",
-        "category":   "biological",
     },
     "S8": {
         "name":       "Multi-Factor Depleted",
