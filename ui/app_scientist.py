@@ -460,6 +460,23 @@ def render_integrated_view():
 
 # ── Physical Segment ────────────────────────────────────────────────────────
 
+def provenance_badge(field: str, measured_fields) -> str:
+    """
+    Marks a reading as instrumented or standing in for one.
+
+    The cache carries `measured_fields` precisely so this is not a guess, but
+    until now the portal rendered every value identically - a soil-type nominal
+    for bulk density looked exactly like a probe reading for moisture. A
+    scientist comparing them cannot tell without knowing the hardware.
+    """
+    if field in (measured_fields or []):
+        return ("<span style='background:#1b5e20;color:#fff;padding:1px 7px;"
+                "border-radius:9px;font-size:0.68rem;letter-spacing:.03em'>MEASURED</span>")
+    return ("<span style='background:#4a4a4a;color:#ddd;padding:1px 7px;"
+            "border-radius:9px;font-size:0.68rem;letter-spacing:.03em'>NOMINAL</span>"
+            "<span style='color:#999;font-size:0.68rem'> · no sensor</span>")
+
+
 def render_physical():
     import pandas as pd
     st.markdown('<h2 class="section-physical">Physical Segment</h2>', unsafe_allow_html=True)
@@ -471,6 +488,7 @@ def render_physical():
         return
 
     sensors = summary.get("sensors", {})
+    measured_fields = summary.get("measured_fields", [])
     physical_fields = ["soil_moisture_pct", "bulk_density_g_cm3", "soil_temp_c"]
     field_labels = {
         "soil_moisture_pct":  ("Soil Moisture",   "%"),
@@ -480,6 +498,17 @@ def render_physical():
 
     # ── Live gauges ──────────────────────────────────────────────────────────
     st.subheader("Current Readings")
+    if measured_fields:
+        st.caption(
+            f"Instrumented on this node: **{', '.join(measured_fields)}**. "
+            "Everything else is the soil-type nominal - a starting assumption, "
+            "not an observation of this parcel."
+        )
+    else:
+        st.caption(
+            "No provenance recorded for the latest reading, so nothing below "
+            "can be confirmed as measured."
+        )
     cols = st.columns(3)
     for i, field in enumerate(physical_fields):
         with cols[i]:
@@ -497,6 +526,8 @@ def render_physical():
                 delta_color="off",
             )
             st.markdown(status_badge(status), unsafe_allow_html=True)
+            st.markdown(provenance_badge(field, measured_fields),
+                        unsafe_allow_html=True)
             warn = info.get("threshold_warn")
             crit = info.get("threshold_crit")
             if warn is not None and crit is not None:

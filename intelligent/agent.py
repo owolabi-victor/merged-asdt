@@ -37,6 +37,9 @@ from intelligent.neo4j_kg import (
 )
 from intelligent.soil_intelligence_agent import SoilIntelligenceAgent
 from shared.influx_io import get_latest
+# measured_fields is cached in Redis by data_layer.writer, not written to
+# InfluxDB - the time series holds values, not their provenance.
+from shared.redis_io import get_latest_cached
 from shared.mongo_io import get_recent_events, get_asset_metadata, get_recent_cross_domain
 from shared.config import (
     OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_KEY,
@@ -212,26 +215,58 @@ def get_twin_state(query: str = "") -> str:
         return f"Error retrieving twin state: {e}"
 
 
+def _measured_fields() -> set[str]:
+    """
+    Which fields in the cache came from hardware this cycle.
+
+    The ingestor stores `measured_fields` alongside the readings precisely so
+    nothing downstream has to guess. Until now the agent's tools ignored it and
+    returned every cached number identically, which let the model present a
+    soil-type nominal as an observation of this parcel.
+    """
+    raw = get_latest_cached("measured_fields")
+    if not raw:
+        return set()
+    if isinstance(raw, (list, tuple, set)):
+        return {str(f).strip() for f in raw}
+    return {f.strip().strip('"') for f in str(raw).split(",") if f.strip()}
+
+
 @tool
 def get_sensor_reading(field: str) -> str:
     """Returns the latest GLOBAL value of a soil sensor field (system-level, not user-specific).
     For user-specific data, use get_user_soil_data instead.
     Valid fields: soil_moisture_pct, soil_temp_c, bulk_density_g_cm3."""
-    val = get_latest(field.strip())
+    name = field.strip()
+    val = get_latest(name)
     if val is None:
         return f"NO DATA available for '{field}'. Do not invent a value. Tell the user no data exists."
-    return f"{field} = {val:.3f}"
+    origin = "measured" if name in _measured_fields() else "nominal (no sensor - do not report as observed)"
+    return f"{name} = {val:.3f}  [{origin}]"
 
 
 @tool
 def get_all_sensor_readings(query: str = "") -> str:
     """Returns all current GLOBAL soil sensor readings (system-level).
     For user-specific data, use get_user_soil_data instead."""
+    measured = _measured_fields()
     readings = {}
     for f in SENSOR_FIELDS:
         v = get_latest(f)
-        readings[f] = round(v, 3) if v is not None else "NO DATA"
-    return json.dumps(readings, indent=2)
+        if v is None:
+            readings[f] = "NO DATA"
+        else:
+            readings[f] = {
+                "value": round(v, 3),
+                "provenance": "measured" if f in measured else "nominal",
+            }
+    return json.dumps({
+        "readings": readings,
+        "measured_by_hardware": sorted(measured) or "none this cycle",
+        "note": ("'nominal' means a soil-type default standing in for a sensor "
+                 "this node does not carry. It is not an observation of this "
+                 "parcel and must not be reported as one."),
+    }, indent=2)
 
 
 @tool
@@ -335,6 +370,12 @@ CRITICAL RULES — VIOLATING THESE IS A FAILURE:
    "You haven't provided any soil measurements yet. Please complete onboarding to enter your soil data."
 6. If a tool fails or returns an error, say so explicitly. Do not paper over errors with guesses.
 7. Always call get_user_context FIRST in any conversation to know who you are talking to.
+8. PROVENANCE. Readings are labelled "measured" or "nominal". This node instruments
+   soil moisture and air temperature/humidity only; everything else is a soil-type
+   default standing in for a sensor that does not exist. A nominal is NOT an
+   observation of this parcel. When an answer rests on one, say so in the same
+   breath as the number - never present it as something that was measured here.
+   Do not diagnose a depletion state from nominals alone.
 """
 
 # NOTE: System prompts are built dynamically in _run_agent_loop() to include

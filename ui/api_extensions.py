@@ -552,10 +552,24 @@ async def scientist_summary(parcel_id: Optional[str] = Query(None),
     fields_with_data = list(readings.keys())
     fields_missing = [f for f in SENSOR_FIELDS if f not in readings]
 
+    # Which fields this node actually instruments. data_layer.writer caches it
+    # from the ingest payload; without it the portal cannot tell a measured
+    # reading from a soil-type nominal, and renders both as though observed.
+    try:
+        from shared.redis_io import get_latest_cached
+        raw_measured = get_latest_cached("measured_fields")
+        measured_fields = (
+            [f.strip().strip('"') for f in str(raw_measured).split(",") if f.strip()]
+            if raw_measured else []
+        )
+    except Exception:
+        measured_fields = []
+
     return {
         "asset_id": parcel_id or ASSET_ID,
         "parcel_id": parcel_id,
         "soil_type": soil_type,
+        "measured_fields": measured_fields,
         "no_data": not has_data,
         "system_state": get_state(),
         "health_score": health_score,
