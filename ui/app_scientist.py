@@ -126,9 +126,13 @@ def api_get(path, params=None):
         return None
 
 
-def api_post(path, data=None):
+def api_post(path, data=None, timeout=15):
+    # 15 s suits a REST read. The advisor runs a tool-calling loop against a
+    # 31B cloud model - several round trips, tens of seconds - so it needs its
+    # own budget. Sharing the default made free-form questions fail silently
+    # while short canned ones happened to squeak through.
     try:
-        r = requests.post(f"{API_V1}{path}", headers=api_headers(), json=data, timeout=15)
+        r = requests.post(f"{API_V1}{path}", headers=api_headers(), json=data, timeout=timeout)
         return r.json() if r.status_code in (200, 201) else {"error": r.text}
     except requests.ConnectionError:
         return {"error": "Cannot connect to API"}
@@ -1025,15 +1029,15 @@ def render_soil_parameters():
 
 def render_advisor():
     """
-    Ask-box over the intelligent layer's tool-calling agent.
+    Chat over the intelligent layer's tool-calling agent.
 
-    The agent already existed and already reached live twin state through its
-    tools; the scientist portal simply never exposed it, so the only way to
-    reach /ui/scientist/chat was to call the API directly.
+    The transcript lives in session state because Streamlit reruns the script
+    on every interaction: without it an answer disappeared the moment anything
+    else on the page was touched, which read as the agent not working.
 
-    Kept as one question and one answer rather than a running transcript: the
-    tools read current state, so old replies in a scrollback are stale numbers
-    presented with the same authority as fresh ones.
+    Each turn is stamped with the time it was answered. The tools read current
+    state, so an answer twenty minutes old describes the parcel as it was then,
+    and the stamp is what stops it being read as now.
     """
     st.markdown("### Ask the Twin")
     st.caption(
@@ -1042,6 +1046,9 @@ def render_advisor():
         "are reported as such."
     )
 
+    if "advisor_chat" not in st.session_state:
+        st.session_state.advisor_chat = []
+
     suggestions = [
         "What is the current state of the parcel?",
         "Which readings are measured rather than modelled?",
@@ -1049,32 +1056,52 @@ def render_advisor():
         "Is soil moisture trending toward a threshold?",
     ]
 
-    question = st.text_input(
-        "Question",
-        key="advisor_question",
-        placeholder="Ask about the parcel, a reading, or the diagnosis...",
-        label_visibility="collapsed",
-    )
+    pending = None
+    if not st.session_state.advisor_chat:
+        cols = st.columns(len(suggestions))
+        for col, text in zip(cols, suggestions):
+            if col.button(text, use_container_width=True,
+                          key=f"advisor_sugg_{text[:16]}"):
+                pending = text
 
-    cols = st.columns(len(suggestions))
-    for col, text in zip(cols, suggestions):
-        if col.button(text, use_container_width=True, key=f"advisor_sugg_{text[:16]}"):
-            question = text
+    for turn in st.session_state.advisor_chat:
+        with st.chat_message(turn["role"], avatar="🔬" if turn["role"] == "assistant" else None):
+            st.markdown(turn["content"])
+            if turn.get("at"):
+                st.caption(f"answered {turn['at']}")
 
+    typed = st.chat_input("Ask about the parcel, a reading, or the diagnosis...")
+    question = pending or typed
     if not question:
+        if st.session_state.advisor_chat and st.button("Clear conversation"):
+            st.session_state.advisor_chat = []
+            st.rerun()
         return
 
-    with st.spinner("Reading the twin's current state..."):
-        result = api_post("/ui/scientist/chat", {"question": question})
+    st.session_state.advisor_chat.append({"role": "user", "content": question})
+    with st.chat_message("user"):
+        st.markdown(question)
 
-    if not result or "error" in result:
-        st.error(f"Advisor unavailable: {result.get('error', 'no response')}")
-        return
+    with st.chat_message("assistant", avatar="🔬"):
+        with st.spinner("Reading the twin's current state..."):
+            result = api_post("/ui/scientist/chat", {"question": question}, timeout=240)
 
-    st.markdown(result.get("answer", "No answer returned."))
+        if not result or "error" in result:
+            detail = (result or {}).get("error", "no response")
+            answer = f"The advisor did not answer: {detail}"
+        else:
+            answer = result.get("answer", "No answer returned.")
+
+        st.markdown(answer)
+        st.session_state.advisor_chat.append({
+            "role": "assistant",
+            "content": answer,
+            "at": datetime.now().strftime("%H:%M:%S"),
+        })
+
     st.caption(
-        "Answers come from the twin's current readings. The node instruments "
-        "soil moisture and air temperature/humidity only."
+        "Answers come from the twin's readings at the time asked. The node "
+        "instruments soil moisture and air temperature/humidity only."
     )
 
 
