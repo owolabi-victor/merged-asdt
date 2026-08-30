@@ -14,7 +14,9 @@ WORKDIR /app
 
 # Copied before the source so a code change does not re-run the install layer.
 COPY docker/requirements-twin-api.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+# --timeout/--retries: PyPI reads time out on slow links, and a droplet
+# build should not fail on one stalled download.
+RUN pip install --no-cache-dir --timeout 120 --retries 5 -r /tmp/requirements.txt
 
 # The same four trees the compose service bind-mounted read-only.
 COPY service_layer/ /app/service_layer/
