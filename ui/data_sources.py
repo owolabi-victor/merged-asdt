@@ -16,7 +16,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 from pymongo import MongoClient
 
-from shared.config import MONGO_URI, MONGO_DB, SENSOR_FIELDS
+from shared.config import MONGO_URI, MONGO_DB, SENSOR_FIELDS, FORCING_FIELDS
 
 _client = MongoClient(MONGO_URI)
 _db = _client[MONGO_DB]
@@ -137,7 +137,11 @@ def get_live_sensor_readings(asset_id: str) -> dict:
 
     now = datetime.now(timezone.utc)
     out = {}
-    for field in SENSOR_FIELDS:
+    # Forcing fields too. The node measures air temperature and humidity, and
+    # fetching only SENSOR_FIELDS meant they were stored but never read back -
+    # the dashboard showed one live card and two the node cannot instrument,
+    # while the two it can were dropped here.
+    for field in list(SENSOR_FIELDS) + list(FORCING_FIELDS):
         # InfluxDB carries the observation time; the Redis cache holds only the
         # value. Ask Influx first so the reading arrives with the instant it was
         # taken, and fall back to the cache when the history window is empty.

@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from pymongo import MongoClient
 
 from shared.config import (
+    FORCING_FIELDS,
     MONGO_URI, MONGO_DB, ASSET_ID, SENSOR_FIELDS, THRESHOLDS,
     ACTIVE_SOIL_TYPE, DEPLETION_STATES, HEALTHY_RANGES,
     THRESHOLDS_BY_SOIL_TYPE, SOIL_TYPES,
@@ -532,7 +533,11 @@ async def scientist_summary(parcel_id: Optional[str] = Query(None),
     readings = get_user_latest_readings(user["user_id"], parcel_id) if parcel_id else {}
 
     sensors = {}
-    for field in SENSOR_FIELDS:
+    # FORCING_FIELDS as well as SENSOR_FIELDS. The node measures air
+    # temperature and humidity, and iterating only SENSOR_FIELDS meant its two
+    # atmospheric readings never reached the dashboard at all - measured, sent,
+    # stored, and then dropped one step from being shown.
+    for field in list(SENSOR_FIELDS) + list(FORCING_FIELDS):
         reading = readings.get(field, {})
         val = reading.get("value")
         sensors[field] = {
@@ -546,6 +551,13 @@ async def scientist_summary(parcel_id: Optional[str] = Query(None),
             "source": reading.get("source"),
             "age_minutes": reading.get("age_minutes"),
         }
+        # A value with no age cannot be shown as current. soil_temp_c carried a
+        # figure written days earlier and was rendered beside a live moisture
+        # reading with an "ok" badge, which asserts a measurement nothing took.
+        if sensors[field]["value"] is not None and reading.get("age_minutes") is None:
+            sensors[field]["value"] = None
+            sensors[field]["status"] = "no_data"
+            sensors[field]["source"] = None
 
     has_data = bool(readings)
     health_score = _compute_health_score_from_readings(readings, soil_type) if readings else None

@@ -537,11 +537,18 @@ def render_physical():
 
     sensors = summary.get("sensors", {})
     measured_fields = summary.get("measured_fields", [])
-    physical_fields = ["soil_moisture_pct", "bulk_density_g_cm3", "soil_temp_c"]
+    # The node's two atmospheric readings belong here: they are measured, they
+    # drive evaporation, and leaving them off meant the view showed one live
+    # card beside two the node cannot read.
+    physical_fields = ["soil_moisture_pct", "air_temperature_c",
+                       "relative_humidity_pct", "bulk_density_g_cm3",
+                       "soil_temp_c"]
     field_labels = {
-        "soil_moisture_pct":  ("Soil Moisture",   "%"),
-        "bulk_density_g_cm3": ("Bulk Density",    "g/cm³"),
-        "soil_temp_c":        ("Soil Temperature","°C"),
+        "soil_moisture_pct":    ("Soil Moisture",     "%"),
+        "air_temperature_c":    ("Air Temperature",   "°C"),
+        "relative_humidity_pct":("Relative Humidity", "%"),
+        "bulk_density_g_cm3":   ("Bulk Density",      "g/cm³"),
+        "soil_temp_c":          ("Soil Temperature",  "°C"),
     }
 
     # ── Live gauges ──────────────────────────────────────────────────────────
