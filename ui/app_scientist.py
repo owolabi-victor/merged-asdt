@@ -323,7 +323,7 @@ def dashboard():
             "Dashboard",
             "Physical Segment",
             "Soil Parameters",
-            "Ask the Twin",
+            "Ask the Soil",
             "Layer Observability",
             "Knowledge Graph",
             "Audit Log",
@@ -353,7 +353,7 @@ def dashboard():
         render_physical()
     elif view == "Soil Parameters":
         render_soil_parameters()
-    elif view == "Ask the Twin":
+    elif view == "Ask the Soil":
         render_advisor()
     elif view == "Layer Observability":
         render_layers()
@@ -1076,7 +1076,7 @@ def render_advisor():
     state, so an answer twenty minutes old describes the parcel as it was then,
     and the stamp is what stops it being read as now.
     """
-    st.markdown("### Ask the Twin")
+    st.markdown("### Ask the Soil")
     st.caption(
         "The agent queries live twin state, sensor readings and the depletion "
         "diagnosis through its own tools. Fields with no instrument behind them "
