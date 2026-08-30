@@ -233,6 +233,11 @@ def status_badge(status):
 
 # ── Gauge Chart ─────────────────────────────────────────────────────────────
 
+#: A reading older than this is not "now". The node uploads every 10 s, so
+#: anything past a few minutes means it has stopped rather than slowed.
+LIVE_WITHIN_MIN = 5
+
+
 def health_gauge(score):
     if score is None:
         score = 0
@@ -258,10 +263,14 @@ def health_gauge(score):
                 {"range": [70, 100], "color": "#052e16"},
             ],
         },
-        number={"suffix": "/100", "font": {"size": 36, "color": "#f9fafb", "family": "JetBrains Mono"}},
+        # 36px monospace renders "100/100" wider than the dial at height=200,
+        # so it overlapped the axis and clipped the 100 tick to "10". The value
+        # is already out of 100 - the axis says so - so the suffix is dropped
+        # rather than shrunk further.
+        number={"font": {"size": 28, "color": "#f9fafb", "family": "JetBrains Mono"}},
     ))
     fig.update_layout(
-        height=200, margin=dict(l=20, r=20, t=20, b=20),
+        height=220, margin=dict(l=30, r=30, t=30, b=10),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font={"color": "#9ca3af"},
     )
@@ -391,8 +400,20 @@ def render_integrated_view():
             st.plotly_chart(health_gauge(hs), use_container_width=True)
         else:
             st.metric("Soil Health Score", "—")
-            st.caption("No data yet — run the simulator")
-        st.caption("Soil Health Score")
+            st.caption("No data yet — nothing has reported.")
+
+        # The score is a weighted average over fields that HAVE a value, so one
+        # healthy reading scores 100 and looks like a verdict on the whole
+        # parcel. Say what it was computed from.
+        scored = [f for f, i in (summary.get("sensors") or {}).items()
+                  if i.get("value") is not None]
+        total = len(summary.get("sensors") or {})
+        if hs is not None and total:
+            st.caption(f"Soil Health Score · from {len(scored)} of {total} parameters")
+            if len(scored) < total:
+                st.caption("Unreported parameters are excluded, not assumed healthy.")
+        else:
+            st.caption("Soil Health Score")
     with c2:
         depletion = summary.get("depletion_states", {})
         st.metric("Active Depletion States", len(depletion))
@@ -406,7 +427,30 @@ def render_integrated_view():
         st.metric("Primary State", primary)
         st.progress(confidence, text=f"Confidence: {confidence:.0%}")
     with c4:
-        st.metric("System State", summary.get("system_state", "unknown").upper())
+        # `system_state` is a Redis key with no expiry, written by the reactive
+        # layer. It survives the node going away, so it read RUNNING beside dead
+        # sensors - the dashboard asserting the twin was live when nothing had
+        # reported for hours. Liveness is a property of the newest reading, so
+        # derive it from the data and show the cached state as what it is.
+        ages = [
+            info.get("age_minutes")
+            for info in (summary.get("sensors") or {}).values()
+            if info.get("value") is not None and info.get("age_minutes") is not None
+        ]
+        freshest = min(ages) if ages else None
+
+        if freshest is None:
+            st.metric("Sensor Link", "NO DATA")
+            st.caption("Nothing has reported. Values below are not current.")
+        elif freshest <= LIVE_WITHIN_MIN:
+            st.metric("Sensor Link", "LIVE", delta=f"{freshest:.0f} min ago",
+                      delta_color="off")
+        else:
+            st.metric("Sensor Link", "STALE", delta=f"{freshest:.0f} min ago",
+                      delta_color="off")
+            st.caption("Older than the live window — the node has stopped reporting.")
+
+        st.caption(f"Twin state (cached): {summary.get('system_state', 'unknown').upper()}")
         st.metric("Soil Type", summary.get("soil_type", "—").title())
 
     st.divider()
@@ -749,8 +793,16 @@ def render_physical():
                 unsafe_allow_html=True,
             )
         with col_b:
-            st.write(f"**BD:** {cr.get('bulk_density', '—')} g/cm³")
-            st.write(f"**Moisture:** {cr.get('moisture_pct', '—'):.1f}%")
+            # Both of these are absent whenever the probe has not reported.
+            # The moisture line used to apply :.1f to the '—' default, which
+            # raises ValueError and takes the whole page down - so a missing
+            # reading crashed the view rather than showing a dash.
+            _bd = cr.get("bulk_density")
+            _mo = cr.get("moisture_pct")
+            st.write(f"**BD:** {_bd:.2f} g/cm³" if isinstance(_bd, (int, float))
+                     else "**BD:** — g/cm³")
+            st.write(f"**Moisture:** {_mo:.1f}%" if isinstance(_mo, (int, float))
+                     else "**Moisture:** —")
             st.write(f"**Action:** {cr.get('action', '—')}")
             if cr.get("note"):
                 st.caption(cr["note"])
