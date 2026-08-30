@@ -310,6 +310,7 @@ def dashboard():
             "Dashboard",
             "Physical Segment",
             "Soil Parameters",
+            "Ask the Twin",
             "Layer Observability",
             "Knowledge Graph",
             "Audit Log",
@@ -339,6 +340,8 @@ def dashboard():
         render_physical()
     elif view == "Soil Parameters":
         render_soil_parameters()
+    elif view == "Ask the Twin":
+        render_advisor()
     elif view == "Layer Observability":
         render_layers()
     elif view == "Knowledge Graph":
@@ -936,6 +939,61 @@ def render_soil_parameters():
 
 
 # ── Layer Observability ─────────────────────────────────────────────────────
+
+def render_advisor():
+    """
+    Ask-box over the intelligent layer's tool-calling agent.
+
+    The agent already existed and already reached live twin state through its
+    tools; the scientist portal simply never exposed it, so the only way to
+    reach /ui/scientist/chat was to call the API directly.
+
+    Kept as one question and one answer rather than a running transcript: the
+    tools read current state, so old replies in a scrollback are stale numbers
+    presented with the same authority as fresh ones.
+    """
+    st.markdown("### Ask the Twin")
+    st.caption(
+        "The agent queries live twin state, sensor readings and the depletion "
+        "diagnosis through its own tools. Fields with no instrument behind them "
+        "are reported as such."
+    )
+
+    suggestions = [
+        "What is the current state of the parcel?",
+        "Which readings are measured rather than modelled?",
+        "Run a depletion diagnosis and explain the result.",
+        "Is soil moisture trending toward a threshold?",
+    ]
+
+    question = st.text_input(
+        "Question",
+        key="advisor_question",
+        placeholder="Ask about the parcel, a reading, or the diagnosis...",
+        label_visibility="collapsed",
+    )
+
+    cols = st.columns(len(suggestions))
+    for col, text in zip(cols, suggestions):
+        if col.button(text, use_container_width=True, key=f"advisor_sugg_{text[:16]}"):
+            question = text
+
+    if not question:
+        return
+
+    with st.spinner("Reading the twin's current state..."):
+        result = api_post("/ui/scientist/chat", {"question": question})
+
+    if not result or "error" in result:
+        st.error(f"Advisor unavailable: {result.get('error', 'no response')}")
+        return
+
+    st.markdown(result.get("answer", "No answer returned."))
+    st.caption(
+        "Answers come from the twin's current readings. The node instruments "
+        "soil moisture and air temperature/humidity only."
+    )
+
 
 def render_layers():
     st.subheader("Layer Observability & Interaction")
