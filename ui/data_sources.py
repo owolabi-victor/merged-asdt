@@ -155,9 +155,11 @@ def get_live_sensor_readings(asset_id: str) -> dict:
         except Exception:
             pass
 
-        if value is None:
-            value = get_latest_cached(field)
-
+        # No fallback to the undated cache. get_latest_cached returns a value
+        # with no observation time, so it cannot be aged, and an unaged value
+        # rendered beside live ones reads as current - soil_temp_c sat at 21.5
+        # for days that way, from a figure written once and never refreshed.
+        # If the history window holds nothing, there is no current reading.
         if value is None:
             continue
         try:
@@ -271,11 +273,15 @@ def get_data_availability(user_id: str, parcel_id: str) -> dict:
     fields_missing = [f for f in SENSOR_FIELDS if f not in fields_with_data]
     completion = len(fields_with_data) / len(SENSOR_FIELDS) * 100
 
-    # Check freshness
+    # Check freshness. A reading whose age is unknown counts as stale: it came
+    # from the cache without an observation time, so nothing can vouch for when
+    # it was taken. Comparing None to the threshold raised TypeError and took
+    # the whole agent tool down, which is a worse answer than "stale".
     stale_threshold_minutes = 60 * 24  # 24 hours
     stale_fields = [
         f for f, info in readings.items()
-        if info["age_minutes"] > stale_threshold_minutes
+        if info.get("age_minutes") is None
+        or info["age_minutes"] > stale_threshold_minutes
     ]
 
     return {
