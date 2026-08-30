@@ -564,9 +564,14 @@ def render_physical():
             "No provenance recorded for the latest reading, so nothing below "
             "can be confirmed as measured."
         )
-    cols = st.columns(3)
+    # One row of three, wrapping. Hardcoding 3 while the field list grew to
+    # five is what raised IndexError on the fourth card and took the page down.
+    per_row = 3
+    cols = st.columns(per_row)
     for i, field in enumerate(physical_fields):
-        with cols[i]:
+        if i and i % per_row == 0:
+            cols = st.columns(per_row)
+        with cols[i % per_row]:
             info  = sensors.get(field, {})
             val   = info.get("value")
             unit  = field_labels[field][1]
@@ -605,8 +610,33 @@ def render_physical():
                 st.warning(f"**{code} — {label_map.get(code, code)}** active")
                 if detail.get("triggers"):
                     for t in detail["triggers"]:
-                        st.write(f"  → {t.get('field', '')}: {t.get('value', ''):.2f} "
-                                 f"(threshold {t.get('threshold', ''):.2f})")
+                        fld = t.get("field", "")
+                        fired_at = t.get("value")
+                        thresh = t.get("threshold")
+                        # The state is cached; its trigger records the reading
+                        # that raised it, not the current one. Printing that
+                        # alone put "0.00" beside a live card reading 66.10.
+                        current = (sensors.get(fld) or {}).get("value")
+                        parts = [f"  → **{fld}**"]
+                        if isinstance(current, (int, float)):
+                            parts.append(f"now {current:.2f}")
+                        if isinstance(fired_at, (int, float)):
+                            parts.append(f"(raised at {fired_at:.2f}")
+                            parts[-1] += (f", threshold {thresh:.2f})"
+                                          if isinstance(thresh, (int, float)) else ")")
+                        elif isinstance(thresh, (int, float)):
+                            parts.append(f"(threshold {thresh:.2f})")
+                        st.write(" ".join(parts))
+                        # If the live reading no longer breaches, the state is
+                        # a leftover and should not read as a present finding.
+                        if (isinstance(current, (int, float))
+                                and isinstance(thresh, (int, float))
+                                and current > thresh):
+                            st.caption(
+                                f"    Current reading is above the {thresh:.2f} "
+                                "threshold — this state predates it and has not "
+                                "been recomputed."
+                            )
                 if detail.get("urgency") == "high":
                     st.error("Cross-domain: plant water demand is HIGH — irrigation urgency elevated")
 
