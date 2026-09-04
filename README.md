@@ -150,7 +150,22 @@ source dt_env/bin/activate          # Linux/macOS
 pip install -r requirements.txt
 ```
 
-### Step 2: Start all infrastructure
+### Step 2: Create the configuration file
+
+```bash
+cp .env.example .env
+```
+
+Required, not optional. `docker-compose.yml` remaps every service port so this
+stack can run alongside a second twin — MQTT on 2883, InfluxDB on 9086, MongoDB
+on 28017, Redis on 7379. The code's built-in fallbacks are the container-internal
+ports, so without `.env` the layers start, connect to nothing, and report no
+data rather than an error.
+
+`.env` is gitignored: it is yours to hold credentials in, and it is never
+committed.
+
+### Step 3: Start all infrastructure
 
 ```bash
 docker compose up -d
@@ -159,13 +174,13 @@ docker compose ps    # all containers should show "running"
 
 Wait ~90 seconds for Eclipse Ditto to fully initialise.
 
-### Step 3: Pull the Ollama LLM model (one-time, ~4 GB download)
+### Step 4: Pull the Ollama LLM model (one-time, ~4 GB download)
 
 ```bash
 docker exec asdt_ollama ollama pull llama3
 ```
 
-### Step 4: First-time setup
+### Step 5: First-time setup
 
 ```bash
 python main.py --setup
@@ -173,13 +188,13 @@ python main.py --setup
 
 This seeds MongoDB, creates the Eclipse Ditto Soil Parcel Thing, and builds the Neo4j knowledge graph.
 
-### Step 5: Start all digital twin layers
+### Step 6: Start all digital twin layers
 
 ```bash
 python main.py
 ```
 
-### Step 6: Run the diagnostic agent
+### Step 7: Run the diagnostic agent
 
 In a second terminal:
 
