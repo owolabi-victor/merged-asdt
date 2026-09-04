@@ -4,6 +4,72 @@
 
 ---
 
+An eight-layer, agent-based digital twin of a soil parcel, driven by a deployed
+ESP32 sensor node. It diagnoses soil problems autonomously and advises through
+a scientist and a farmer portal.
+
+Its defining property is **measurement provenance**: every value it reports is
+traceable to an instrument, or it is not reported.
+
+---
+
+## Get it running
+
+No hardware required. The captured hardware dataset is in the repository, so a
+clone reproduces the evaluation on its own.
+
+```bash
+git clone https://github.com/owolabi-victor/merged-asdt.git
+cd merged-asdt
+
+python3 -m venv dt_env
+source dt_env/bin/activate            # Windows: .\dt_env\Scripts\activate
+pip install -r requirements.txt
+
+cp .env.example .env                  # required — see the note below
+docker compose up -d                  # infrastructure; give it ~90s the first time
+
+USE_REAL_SENSOR=1 python main.py      # replays the captured node readings
+```
+
+Then open the portals:
+
+```bash
+streamlit run ui/app_scientist.py --server.port 8501
+streamlit run ui/app_farmer.py    --server.port 8502
+```
+
+### Why `cp .env.example .env` is not optional
+
+`docker-compose.yml` remaps every published port so this stack can run beside a
+second twin — MQTT on **2883**, InfluxDB on **9086**, MongoDB on **28017**,
+Redis on **7379**. The code's built-in fallbacks are the container-internal
+ports it was remapped away from, so without `.env` the layers start, connect to
+nothing, and report no data rather than an error. `.env` is gitignored; it is
+yours to hold credentials in.
+
+### The agent needs a model
+
+```bash
+ollama pull llama3.2                  # or point OLLAMA_BASE_URL at hosted inference
+```
+
+Without it the seven data layers run normally; only the advisory will not
+answer.
+
+### Check it is working
+
+```bash
+docker compose ps                                  # services up
+docker exec merged_asdt_redis redis-cli HGET soil_parcel_001:latest measured_fields
+```
+
+That second command is the one that matters: it is the system's own record of
+which fields came from an instrument. Every portal reading and every agent
+answer is derived from it.
+
+---
+
 ## Project Overview
 
 The **Agentic Soil Digital Twin (ASDT)** is an eight-layer, agent-based digital
@@ -206,79 +272,6 @@ asdt/
 
 ---
 
-## Quick Start
-
-### Prerequisites
-
-- Docker Desktop (≥ 6 GB RAM allocated)
-- Python 3.10+
-
-### Step 1: Clone and set up Python environment
-
-```bash
-cd asdt
-python3 -m venv dt_env
-source dt_env/bin/activate          # Linux/macOS
-# .\dt_env\Scripts\activate         # Windows
-
-pip install -r requirements.txt
-```
-
-### Step 2: Create the configuration file
-
-```bash
-cp .env.example .env
-```
-
-Required, not optional. `docker-compose.yml` remaps every service port so this
-stack can run alongside a second twin — MQTT on 2883, InfluxDB on 9086, MongoDB
-on 28017, Redis on 7379. The code's built-in fallbacks are the container-internal
-ports, so without `.env` the layers start, connect to nothing, and report no
-data rather than an error.
-
-`.env` is gitignored: it is yours to hold credentials in, and it is never
-committed.
-
-### Step 3: Start all infrastructure
-
-```bash
-docker compose up -d
-docker compose ps    # all containers should show "running"
-```
-
-Wait ~90 seconds for Eclipse Ditto to fully initialise.
-
-### Step 4: Pull the Ollama LLM model (one-time, ~4 GB download)
-
-```bash
-docker exec asdt_ollama ollama pull llama3
-```
-
-### Step 5: First-time setup
-
-```bash
-python main.py --setup
-```
-
-This seeds MongoDB, creates the Eclipse Ditto Soil Parcel Thing, and builds the Neo4j knowledge graph.
-
-### Step 6: Start all digital twin layers
-
-```bash
-python main.py
-```
-
-### Step 7: Run the diagnostic agent
-
-In a second terminal:
-
-```bash
-source dt_env/bin/activate
-python -m intelligent.agent
-```
-
----
-
 ## The situation, step by step
 
 The scenario the running system handles is **water stress**, because moisture is
@@ -405,6 +398,81 @@ from(bucket: "soil_telemetry")
 
 ---
 
+## Setup in detail
+
+### Prerequisites
+
+- Docker Desktop (≥ 6 GB RAM allocated)
+- Python 3.10+
+
+### Step 1: Clone and set up Python environment
+
+```bash
+cd asdt
+python3 -m venv dt_env
+source dt_env/bin/activate          # Linux/macOS
+# .\dt_env\Scripts\activate         # Windows
+
+pip install -r requirements.txt
+```
+
+### Step 2: Create the configuration file
+
+```bash
+cp .env.example .env
+```
+
+Required, not optional. `docker-compose.yml` remaps every service port so this
+stack can run alongside a second twin — MQTT on 2883, InfluxDB on 9086, MongoDB
+on 28017, Redis on 7379. The code's built-in fallbacks are the container-internal
+ports, so without `.env` the layers start, connect to nothing, and report no
+data rather than an error.
+
+`.env` is gitignored: it is yours to hold credentials in, and it is never
+committed.
+
+### Step 3: Start all infrastructure
+
+```bash
+docker compose up -d
+docker compose ps    # all containers should show "running"
+```
+
+Wait ~90 seconds for Eclipse Ditto to fully initialise.
+
+### Step 4: Pull the Ollama LLM model (one-time, ~4 GB download)
+
+```bash
+docker exec asdt_ollama ollama pull llama3
+```
+
+### Step 5: First-time setup
+
+```bash
+python main.py --setup
+```
+
+This seeds MongoDB, creates the Eclipse Ditto Soil Parcel Thing, and builds the Neo4j knowledge graph.
+
+### Step 6: Start all digital twin layers
+
+```bash
+python main.py
+```
+
+### Step 7: Run the diagnostic agent
+
+In a second terminal:
+
+```bash
+source dt_env/bin/activate
+python -m intelligent.agent
+```
+
+---
+
+---
+
 ## Running against real hardware
 
 The physical layer is a switch, not a rewrite. Unset, the simulator runs and
@@ -472,28 +540,3 @@ exists to address.
   spatial variation.
 
 ---
-
-## Reproducing this work
-
-Everything needed is in the repository. No hardware is required to run the
-system and reproduce the evaluation:
-
-```bash
-git clone https://github.com/owolabi-victor/merged-asdt.git
-cd merged-asdt
-python3 -m venv dt_env && source dt_env/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-docker compose up -d
-USE_REAL_SENSOR=1 python main.py
-```
-
-The captured dataset in `data/captures/` is tracked deliberately: the cloud
-buckets it came from expire on a 30-day retention, and it is the record of the
-instrumented node running.
-
-Two things a fresh clone does not include, by design: `.env` (credentials are
-yours to supply, from `.env.example`) and the Ollama model (`ollama pull
-llama3.2`, or point `OLLAMA_BASE_URL` at hosted inference). Without the model
-the seven data layers run normally; only the agent will not answer.
-
