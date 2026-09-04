@@ -6,65 +6,131 @@
 
 ## Project Overview
 
-The **Agentic Soil Digital Twin (ASDT)** is a fully layered, agent-based digital twin system for soil health monitoring and management advisory. It mirrors a physical soil parcel in software, enabling autonomous diagnosis of soil problems and delivery of management recommendations to farmers.
+The **Agentic Soil Digital Twin (ASDT)** is an eight-layer, agent-based digital
+twin of a soil parcel. It is driven by a deployed ESP32 sensor node, diagnoses
+soil problems autonomously, and delivers management advice to a scientist and a
+farmer through separate portals.
 
-This implementation focuses on **one complete situation**:
+Its defining property is **measurement provenance**. Every value the system
+reports is traceable to an instrument, or it is not reported. Fields with no
+sensor behind them were removed from the schema rather than filled with
+plausible defaults, because the thresholds, the health score and the depletion
+detector all read whatever the schema contains — and a twin that can diagnose a
+deficiency from a value nobody measured is worse than one that says nothing.
 
-> **A farmer reports that their maize crop is showing yellowing leaves and stunted growth. The ASDT must diagnose the soil cause and provide a soil management recommendation.**
+### What is measured, and what is not
 
-The system is built following the **8-layer Digital Twin architecture** from the Implementation Guide, adapted from an industrial pump to an agricultural soil parcel.
+The deployed node instruments three quantities. They are the only three the
+system will report:
+
+| Field | Instrument | Reported |
+|---|---|---|
+| `soil_moisture_pct` | Resistive probe, ADC1 ch6, two-point calibration | yes |
+| `air_temperature_c` | DHT11, GPIO18 | yes |
+| `relative_humidity_pct` | DHT11, GPIO18 | yes |
+
+Soil pH, nitrogen, phosphorus, potassium, electrical conductivity, organic
+matter, microbial biomass and soil respiration have **no instrument on this
+node**. They are absent from the ingest schema, the thresholds, the rules, the
+portals and the tests. The two atmospheric readings enter instead as *forcing
+variables*, driving an evaporation model whose every input is an observation.
+
+> **The moisture reading is a calibrated proxy, not volumetric water content.**
+> A resistive probe reports a position between two empirically determined
+> endpoints. Converting to true VWC requires gravimetric calibration against
+> oven-dried samples, which has not been performed.
 
 ---
 
 ## Architecture
 
+Eight layers. Data flows upward; control flows downward. No layer imports
+another — they coordinate only through MQTT and the shared stores, which is why
+any one of them can be restarted or replaced independently.
+
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  INTELLIGENT LAYER  (Orchestrator + Soil Intelligence Agent)     │
-│  • Symptom recognition   • Differential diagnosis               │
-│  • Recommendation        • Explanation generation               │
-│  • LLM agent (Ollama)    • Escalation decision                  │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │ calls down
-┌──────────────────────────▼───────────────────────────────────────┐
-│  REACTIVE LAYER  (Data Quality Agent)                            │
-│  • Threshold monitoring  • State machine (running/warning)       │
-│  • QA/QC flagging        • Alert generation via MQTT             │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │ calls down
-┌──────────────────────────▼───────────────────────────────────────┐
-│  SERVICE LAYER  (Eclipse Ditto + FastAPI)                        │
-│  • Soil Parcel Thing     • REST API for all layers               │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │ calls down
-┌──────────────────────────▼───────────────────────────────────────┐
-│  SIMULATION & MODEL LAYER  (Soil Process Model)                  │
-│  • Water balance model   • Nitrogen cycling                      │
-│  • Residuals (anomaly signal)                                    │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │ calls down
-┌──────────────────────────▼───────────────────────────────────────┐
-│  DATA MANAGEMENT LAYER  (Pipeline)                               │
-│  • Smoothing & QC flags  • Soil health score (0–100)            │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │ calls down
-┌──────────────────────────▼───────────────────────────────────────┐
-│  DATA LAYER  (InfluxDB · MongoDB · Redis · MinIO)                │
-│  • Live telemetry        • Farmer reports, diagnoses, outcomes   │
-│  • Agent interaction log • File storage                          │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │ calls down
-┌──────────────────────────▼───────────────────────────────────────┐
-│  NETWORK LAYER  (MQTT · Mosquitto)                               │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │
-┌──────────────────────────▼───────────────────────────────────────┐
-│  PHYSICAL LAYER  (IoT Sensors / Python Simulator)                │
-│  • soil_moisture_pct     • nitrogen_ppm    • soil_ph             │
-│  • soil_temp_c           • phosphorus_ppm  • potassium_ppm       │
-│  • ec_ds_m               • bulk_density_g_cm3                    │
+│  INTELLIGENT     Tool-calling LLM agent · differential diagnosis │
+│                  recommendation · escalation decision            │
+├──────────────────────────────────────────────────────────────────┤
+│  REACTIVE        Threshold monitoring · FSM · alert generation   │
+├──────────────────────────────────────────────────────────────────┤
+│  SERVICE         Eclipse Ditto Thing · FastAPI REST              │
+├──────────────────────────────────────────────────────────────────┤
+│  SIMULATION      Water balance · evaporation · residuals         │
+├──────────────────────────────────────────────────────────────────┤
+│  DATA MGMT       Smoothing · QA/QC flags · soil health score     │
+├──────────────────────────────────────────────────────────────────┤
+│  DATA            InfluxDB · MongoDB · Redis · MinIO              │
+├──────────────────────────────────────────────────────────────────┤
+│  NETWORK         MQTT — Mosquitto locally, HiveMQ Cloud          │
+├──────────────────────────────────────────────────────────────────┤
+│  PHYSICAL        ESP32 node — resistive probe · DHT11            │
 └──────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## The flow of a reading
+
+1. **Node.** Eight ADC samples, median-filtered, mapped through the two-point
+   calibration. The probe health check runs *before* publication: a reading
+   below the fault floor, or with sample scatter above the limit, is rejected
+   rather than published. The payload declares `measured_fields`.
+2. **Bridge.** `pod_bridge` is the only component that knows both twins'
+   vocabularies. It translates and publishes to `dt/soil_parcel_001/telemetry`
+   on Mosquitto, and to HiveMQ Cloud over TLS.
+3. **Ingest.** `dt_network.ingestor` validates against a Pydantic schema —
+   types, ranges, NaN rejection. Failures go to a dead-letter topic, never into
+   the store.
+4. **Storage.** `data_layer.writer` routes to InfluxDB (series), Redis (latest
+   values **and `measured_fields`**) and MongoDB (events).
+5. **Processing.** Smoothing and QA/QC flags; the water balance model runs in
+   parallel and writes residuals; the rule engine evaluates thresholds and
+   drives the FSM.
+6. **Service.** FastAPI exposes the summary, including `measured_fields`.
+7. **Consumers.** The portals render a provenance chip per field; the agent's
+   tools carry the same labels into every answer.
+
+Provenance travels with the reading at every hop. A value that loses it is
+treated as unmeasured at the far end.
+
+---
+
+## The sensor node
+
+Firmware lives in a separate repository (`sensors`), built with **ESP-IDF
+v5.5.5** for an **ESP32-D0WD-V3**.
+
+| Concern | Implementation |
+|---|---|
+| Soil probe | Resistive, ADC1 channel 6. ADC2 is unusable once Wi-Fi is up |
+| Calibration | 3126 mV dry air → 0 %, 1400 mV in water → 100 % |
+| Sampling | 8 samples per reading, median filtered |
+| Fault detection | Plausibility floor + sample dispersion, with a 3-reading recovery streak |
+| Climate | DHT11 on GPIO18, bit-banged single-wire protocol |
+| Provisioning | Captive portal; SSID, password and ingest URL stored in NVS |
+| Remote logging | UDP broadcast mirror of the serial console, for untethered use |
+
+The node cannot do TLS — no certificate bundle is attached — so the ingest
+endpoint is plain HTTP protected by a shared secret. This is stated rather than
+hidden: it stops opportunistic writes, not an observer on the path.
+
+---
+
+## Algorithms
+
+| Stage | Method | Why |
+|---|---|---|
+| Sampling | Median of 8 | Rejects single-sample spikes outright; a mean would smear them |
+| Calibration | Linear two-point, clamped | Endpoints measured empirically, not assumed |
+| Fault detection | Plausibility floor + dispersion + hysteresis | Soil cannot conduct better than water; a floating pin scatters |
+| Smoothing | Boxcar moving average (`np.convolve`) | Soil changes slowly; the noise is high-frequency |
+| Health score | Weighted average over fields with values | Unreported fields are excluded, never assumed healthy |
+| Anomaly | Residuals: measured − modelled | Compares against physics rather than a fixed number |
+| Evaporation | Drawdown vs vapour pressure deficit | Separates energy-limited from supply-limited drying |
+| Diagnosis | Differential ranking with confidence | Escalates below threshold rather than asserting weakly |
+| Advisory | Tool-calling loop (ReAct-style) | The model chooses the sequence; it is not a fixed pipeline |
 
 ---
 
@@ -72,6 +138,7 @@ The system is built following the **8-layer Digital Twin architecture** from the
 
 | Layer                   | Tool               |
 | ----------------------- | ------------------ |
+| Physical sensing        | ESP32 + ESP-IDF v5.5.5 (C) |
 | Sensor simulation       | Python (paho-mqtt) |
 | MQTT broker             | Eclipse Mosquitto  |
 | Time-series DB          | InfluxDB 2.7       |
@@ -80,9 +147,9 @@ The system is built following the **8-layer Digital Twin architecture** from the
 | File storage            | MinIO              |
 | Digital Twin platform   | Eclipse Ditto 3.5  |
 | Knowledge graph         | Neo4j 5.13         |
-| LLM (local, no API key) | Ollama (llama3)    |
+| LLM                     | Ollama — local, or hosted inference |
 | Agent framework         | LangChain          |
-| Dashboard               | Grafana 10         |
+| Dashboards              | Streamlit portals · Grafana 10 |
 | Infrastructure          | Docker Compose     |
 
 ---
@@ -103,7 +170,8 @@ asdt/
 │   └── redis_io.py             # Redis cache helpers
 │
 ├── physical/
-│   └── simulator.py            # Soil sensor simulator (N-deficiency scenario)
+│   ├── simulator.py            # Soil sensor simulator
+│   └── real_sensor_bridge.py   # Replays captured hardware readings into the twin
 │
 ├── dt_network/
 │   └── ingestor.py             # MQTT → Pydantic validation → Data Layer
@@ -115,7 +183,8 @@ asdt/
 │   └── pipeline.py             # Smoothing, quality flags, health score
 │
 ├── simulation/
-│   └── model_runner.py         # Soil water balance + N cycling model
+│   ├── model_runner.py         # Soil water balance + residuals
+│   └── evaporation.py          # Measured evaporation and the drying-stage split
 │
 ├── service_layer/
 │   ├── ditto_client.py         # Eclipse Ditto Thing management
@@ -123,6 +192,11 @@ asdt/
 │
 ├── reactive/
 │   └── rule_engine.py          # Threshold rules + state machine
+│
+├── ui/                         # Streamlit portals (scientist, farmer) + API layer
+├── docker/                     # Dockerfiles and pinned requirements
+├── data/captures/              # Hardware telemetry exports, deliberately tracked
+├── docs/                       # Implementation notes, deck, defence material
 │
 └── intelligent/
     ├── neo4j_kg.py             # Soil knowledge graph (symptoms → causes → actions)
@@ -205,37 +279,56 @@ python -m intelligent.agent
 
 ---
 
-## The Situation — Step by Step
+## The situation, step by step
 
-The farmer reports: _"My maize is showing yellowing leaves and stunted growth."_
+The scenario the running system handles is **water stress**, because moisture is
+what the node instruments. The earlier nutrient-deficiency scenario described a
+capability this hardware does not have, and was withdrawn along with the fields
+behind it.
 
-### What happens automatically:
+The farmer reports: _"My maize is wilting in the afternoon and the soil looks
+dry."_
 
-**Physical Layer**: Simulator publishes soil readings every 30 seconds:
+### What happens automatically
 
-- `nitrogen_ppm = 8.0` (critical: should be ≥ 15)
-- `soil_ph = 5.6` (marginal: maize minimum is 5.5)
-- `soil_moisture_pct = 52.0` (adequate — rules out water stress)
+**Physical layer.** The node reads the probe every second and uploads a batch.
+Each payload declares `measured_fields`, so nothing downstream has to guess
+which numbers came from hardware:
 
-**Reactive Layer**: Rule engine detects nitrogen below warning threshold → raises alert, sets state to `warning`.
+```json
+{ "soil_moisture_pct": 12.4, "air_temperature_c": 31.2,
+  "relative_humidity_pct": 46.0,
+  "measured_fields": ["soil_moisture_pct","air_temperature_c","relative_humidity_pct"],
+  "source": "node-soil-01" }
+```
 
-**Intelligent Layer** (when farmer reports symptoms):
+**Network and ingest.** Published to MQTT, validated against the Pydantic
+schema. Anything malformed is dead-lettered rather than stored.
 
-1. **Symptom Recognition**: "yellowing" + "stunted" → `[yellowing_leaves, stunted_growth]`
-2. **Soil Data Retrieval**: reads all sensor fields from InfluxDB
-3. **Differential Diagnosis**:
-   - `nitrogen_deficiency`: 85% confidence (symptoms + sensor confirm)
-   - `water_stress`: 10% (ruled out — moisture adequate)
-   - `soil_acidity`: 30% (secondary — pH marginal but above critical)
-4. **Recommendation**: Apply 200 kg/ha CAN immediately
-5. **Explanation**: Plain-language report for farmer
-6. **Outcome Tracking**: Saves to MongoDB; updates Ditto Thing
+**Data management.** Smoothing and QA/QC flags; the health score is computed
+over fields that have values, and says how many that was.
 
-### Escalation logic:
+**Simulation.** The water balance predicts the next state; residuals record
+where the measurement departs from it. The evaporation model uses probe
+drawdown as the observation and vapour pressure deficit from the DHT11 as the
+atmospheric demand, separating energy-limited from supply-limited drying.
 
-- Confidence ≥ 85% → Autonomous: delivered directly to farmer
-- Confidence 70–85% → Intelligent: multi-agent review, then delivered
-- Confidence < 70% → Escalated to Soil Scientist for review
+**Reactive layer.** Moisture below the soil-type warning threshold raises an
+alert and moves the FSM to `warning`; further decline triggers **S5 —
+Water-Stressed**.
+
+**Intelligent layer.** Asked about the parcel, the agent calls its own tools,
+reads the current readings and the diagnosis, and answers citing the specific
+values it used — labelling each one measured or nominal. With no instrument
+reporting it states that the node is not reporting rather than producing a
+score.
+
+### Escalation
+
+Confidence is proportional to the deviation from threshold. Above the
+autonomous band the agent advises directly; below it, the case is escalated
+rather than asserted weakly. A diagnosis is never issued from fields with no
+instrument behind them.
 
 ---
 
@@ -281,7 +374,7 @@ After `python main.py` is running:
 from(bucket: "soil_telemetry")
   |> range(start: v.timeRangeStart)
   |> filter(fn:(r) => r._measurement == "soil_telemetry")
-  |> filter(fn:(r) => r._field == "nitrogen_ppm")
+  |> filter(fn:(r) => r._field == "soil_moisture_pct")
 
 // Soil health score
 from(bucket: "soil_telemetry")
@@ -290,11 +383,11 @@ from(bucket: "soil_telemetry")
   |> filter(fn:(r) => r._field == "soil_health_score")
   |> last()
 
-// Model vs real nitrogen (residual anomaly)
+// Model vs measured moisture (residual anomaly)
 from(bucket: "soil_telemetry")
   |> range(start: v.timeRangeStart)
   |> filter(fn:(r) => r._measurement == "soil_residuals")
-  |> filter(fn:(r) => r._field == "res_nitrogen_ppm")
+  |> filter(fn:(r) => r._field == "res_soil_moisture_pct")
 ```
 
 ---
@@ -309,3 +402,98 @@ from(bucket: "soil_telemetry")
 | Neo4j ConnectionError | Run `docker logs asdt_neo4j \| tail -20` and wait for "Started"        |
 | Ollama agent hangs    | Ensure model is pulled: `docker exec asdt_ollama ollama pull llama3`   |
 | `ModuleNotFoundError` | Always run from project root: `python -m module.submodule`             |
+
+---
+
+## Running against real hardware
+
+The physical layer is a switch, not a rewrite. Unset, the simulator runs and
+nothing else changes.
+
+```bash
+# replay the captured dataset (799 readings, 1 Hz, 5 wetting events)
+USE_REAL_SENSOR=1 python main.py
+
+# or replay directly, at your own pace
+python -m physical.real_sensor_bridge --csv data/soil_dataset.csv --interval 2 --loop
+```
+
+For a live node, run the bridge from the firmware repository and point the
+node's ingest URL at it. The bridge publishes to both twins and to the cloud
+brokers; the node's URL is set through its captive portal and held in NVS, so
+moving networks is a re-provision rather than a reflash.
+
+---
+
+## Verifying it is reading live data
+
+```bash
+# 1. uploads arriving, with the destinations each was published to
+tail -f <bridge log>
+
+# 2. what actually reached the time series, last five minutes
+curl -s -X POST "http://localhost:9086/api/v2/query?org=asdt" \
+  -H "Authorization: Token $INFLUXDB_TOKEN" \
+  -H "Content-Type: application/vnd.flux" -H "Accept: application/csv" \
+  --data 'from(bucket:"soil_telemetry") |> range(start:-5m)
+          |> filter(fn:(r)=> r._field=="soil_moisture_pct") |> last()'
+
+# 3. provenance — what the hardware actually measured
+docker exec merged_asdt_redis redis-cli HGET soil_parcel_001:latest measured_fields
+```
+
+The third command is the one that matters. It is the system's own record of
+which fields came from an instrument, and every portal and agent answer is
+derived from it.
+
+---
+
+## Limitations
+
+Stated here because a twin that hides its boundaries is the problem this project
+exists to address.
+
+- **Single instrumented channel.** Moisture, air temperature and humidity are
+  measured. Bulk density and soil temperature are reported as null, never
+  estimated. Every conclusion the running system draws rests on those three.
+- **Not volumetric water content.** The probe reports a calibrated proxy.
+  Gravimetric calibration against oven-dried samples has not been performed.
+- **Plain-HTTP ingest.** The firmware carries no certificate bundle, so the
+  shared secret crosses the network in the clear. It stops strangers who find
+  the port; it is not protection against an observer.
+- **Evaluation by replay.** Chapter Four's dataset was captured from the
+  hardware and replayed, which gives repeatable auditable evaluation but does
+  not exercise unattended operation, network interruption or seasonal drift.
+- **Hosted dashboards depend on a running host.** The portals reach the API
+  through a tunnel that requires the machine to stay online. Adequate for
+  evaluation, not for an always-available service.
+- **Three-dimensional soil visualisation is illustrative.** It interpolates a
+  single point measurement across a volume and does not represent measured
+  spatial variation.
+
+---
+
+## Reproducing this work
+
+Everything needed is in the repository. No hardware is required to run the
+system and reproduce the evaluation:
+
+```bash
+git clone https://github.com/owolabi-victor/merged-asdt.git
+cd merged-asdt
+python3 -m venv dt_env && source dt_env/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+docker compose up -d
+USE_REAL_SENSOR=1 python main.py
+```
+
+The captured dataset in `data/captures/` is tracked deliberately: the cloud
+buckets it came from expire on a 30-day retention, and it is the record of the
+instrumented node running.
+
+Two things a fresh clone does not include, by design: `.env` (credentials are
+yours to supply, from `.env.example`) and the Ollama model (`ollama pull
+llama3.2`, or point `OLLAMA_BASE_URL` at hosted inference). Without the model
+the seven data layers run normally; only the agent will not answer.
+
